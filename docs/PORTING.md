@@ -1,128 +1,29 @@
 # Porting to Teensy
 
-This document outlines how to port the sampler DSP core to Teensy hardware.
+This document covers the full strategy for porting the sampler DSP core to Teensy 4.1
+hardware — what stays the same, what needs to be rewritten, how the repository is
+structured to keep both targets in sync, and the methodology for working through the
+port incrementally using the toolchain available in this workspace.
 
-## Why This Codebase is Portable
+---
 
-All audio processing logic lives in `src/dsp/` with **zero JUCE dependencies**. This means:
+## 1. Portability Rationale
 
-- CircularBuffer, Sampler, SamplerBank, Mixer, FreezeEffect are pure C++
-- No virtual function calls, dynamic allocation in real-time paths
-- Fixed buffer sizes (known at compile time or allocated once)
-- Thread-safe atomic operations for parameter changes
+All audio processing logic lives in `src/dsp/` with **zero JUCE dependencies**:
 
-## JUCE Dependencies to Replace
+- `CircularBuffer`, `Sampler`, `SamplerBank`, `Mixer`, `FreezeEffect` are pure C++17
+- No virtual function calls, no dynamic allocation in real-time paths
+- Fixed buffer sizes (known at compile time or allocated once in `setup()`)
+- `std::atomic<>` for parameter changes — lock-free on ARM Cortex-M7 (Teensy 4.1)
 
-The following JUCE-specific functionality **exists only in `src/juce/`** and **must be reimplemented for Teensy**:
+The JUCE layer (`src/juce/`) is a thin wrapper around this core. Replacing it for
+Teensy means rewriting only the I/O glue, not the DSP.
 
-### 1. **Audio I/O**
+---
 
-**JUCE:** `AudioProcessor::processBlock()` called by host
-```cpp
-// JUCE version
-void PluginProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midiMessages)
-{
-    // Audio data already in buffer from host
-}
-```
+## 2. What Stays vs. What Changes
 
-**Teensy:** Raw I2S codec driver
-```cpp
-// Teensy version (pseudocode)
-void handleAudioInterrupt() {
-    float inputBuffer[BLOCK_SIZE];
-    readFromCodec(inputBuffer);
-    
-    // Call pure DSP processBlock equivalent
-    float outputBuffer[BLOCK_SIZE];
-    processAudio(inputBuffer, outputBuffer, BLOCK_SIZE);
-    
-    writeToCodec(outputBuffer);
-}
-```
-
-### 2. **MIDI Input**
-
-**JUCE:** Host sends MIDI via `MidiBuffer` in processBlock()
-```cpp
-// JUCE version
-for (auto metadata : midiMessages) {
-    handleMidiMessage(metadata.getMessage());
-}
-```
-
-**Teensy:** USB MIDI or Serial MIDI
-```cpp
-// Teensy version
-void setup() {
-    usbMIDI.setHandleNoteOn(handleMidiNoteOn);
-}
-
-void handleMidiNoteOn(byte channel, byte note, byte velocity) {
-    samplerBank_.triggerSample(note % 4, 4.0, globalTempo);
-}
-```
-
-### 3. **Tempo Sync**
-
-**JUCE:** Host provides tempo via `PlayHead::getPosition()`
-```cpp
-// JUCE version
-double getTempo() const {
-    if (auto pos = getPlayHead()->getPosition())
-        if (auto bpm = pos->getBpm())
-            return bpm.value();
-    return 120.0;
-}
-```
-
-**Teensy:** Local tempo knob or external clock input
-```cpp
-// Teensy version
-double globalTempo = 120.0;  // From knob input
-
-void updateTempoKnob() {
-    int analogValue = analogRead(TEMPO_PIN);
-    globalTempo = map(analogValue, 0, 1023, 40, 200);  // 40-200 BPM
-}
-```
-
-### 4. **Parameter Changes**
-
-**JUCE:** Host sends parameter updates via `AudioProcessorValueTreeState`
-```cpp
-// All parameter changes go through atomics in DSP modules
-dsp::freezeEffect_.setDryWetMix(parameterValue);
-```
-
-**Teensy:** Local UI controls
-```cpp
-// Teensy version
-void updateUI() {
-    // Read potentiometers, buttons, encoders
-    freezeEffect_.setDryWetMix(readPotentiometer(DRY_WET_PIN) / 1023.0f);
-    freezeEffect_.setFrozen(readButton(FREEZE_BUTTON));
-}
-```
-
-### 5. **Per-Sample Gain**
-
-The DSP layer now supports per-pad volume via `SamplerBank::setSampleGain(index, gain)`.
-In JUCE this is driven by the APVTS `sampleGain0-3` parameters; on Teensy it will be
-driven by a potentiometer whose target pad is selected by the sample-select button.
-
-```cpp
-// Teensy version
-void updatePerSampleControls() {
-    // currentSampleTab is toggled by the sample-select button (0-3)
-    float gainValue = analogRead(SAMPLE_GAIN_POT) / 1023.0f * 2.0f;  // 0.0-2.0
-    samplerBank_.setSampleGain(currentSampleTab, gainValue);
-}
-```
-
-## Shared DSP Core
-
-All these files stay **exactly the same** for Teensy:
+### Shared DSP core — zero changes
 
 ```
 src/dsp/
@@ -134,24 +35,282 @@ src/dsp/
 └── AudioBuffer.h/cpp          ✓ No changes
 ```
 
-All DSP code is pure C++17. No JUCE headers, no virtual calls, no heap allocation
-in real-time paths. `std::atomic<>` is used for parameter changes—this compiles
-on Teensy 4.1 (ARM Cortex-M7 supports lock-free atomics for 32-bit types).
+### JUCE glue — replaced entirely
 
-## Teensy-Specific Code Location
+The following exist only in `src/juce/` and have direct Teensy equivalents:
 
-Create these new files in `src/hardware/teensy/`:
+| JUCE concept | JUCE mechanism | Teensy replacement |
+|---|---|---|
+| Audio I/O | `AudioProcessor::processBlock()` | I2S codec ISR |
+| MIDI input | `MidiBuffer` in processBlock | `usbMIDI` callbacks |
+| Tempo | `PlayHead::getPosition()->getBpm()` | Pot or external clock |
+| Parameter changes | `AudioProcessorValueTreeState` | `analogRead` / `digitalRead` in `loop()` |
+| Sample loading | `juce::AudioFormatManager` + `AudioSampleBuffer` | Manual WAV parser + PSRAM |
+| Per-sample gain | APVTS `sampleGain0-3` params | Pot + sample-select button |
+
+### New Teensy-only files
+
+Create these in `src/hardware/teensy/`:
 
 ```
 src/hardware/teensy/
-├── I2SCodecDriver.h/cpp       # Audio codec interfacing
-├── MidiInput.h/cpp            # USB/Serial MIDI handler
-├── UIController.h/cpp         # UI knobs, buttons, display
-├── TempoController.h/cpp      # Tempo sync logic
-└── TeensySampler.cpp          # main() and setup()
+├── main.cpp / TeensySampler.cpp   # setup() + loop() entry point
+├── I2SCodecDriver.h/cpp           # Audio codec interfacing (I2S)
+├── MidiInput.h/cpp                # USB/Serial MIDI handler
+├── UIController.h/cpp             # Pots, buttons, sample-select cycling
+├── TempoController.h/cpp          # BPM from pot or external clock
+└── SampleLoader.h/cpp             # WAV parser + PSRAM loader
 ```
 
-## Planned Teensy Hardware Layout
+---
+
+## 3. Repository Layout & Toolchain
+
+The Teensy firmware lives inside this repo as a PlatformIO project. The key design
+principle is that **`src/dsp/` is a shared source root** — no file copying, no
+duplication. Editing `FreezeEffect.cpp` once updates both the VST build and the next
+Teensy firmware build automatically.
+
+### Directory layout
+
+```
+vst_plugin_project/
+├── src/
+│   ├── dsp/                          ← shared by JUCE + Teensy (never changes)
+│   ├── juce/                         ← VST-only wrapper
+│   ├── audio/                        ← VST-only file loading
+│   └── hardware/
+│       └── teensy/
+│           ├── platformio.ini        ← PlatformIO project config (Teensy 4.1 target)
+│           ├── src/
+│           │   ├── main.cpp          ← setup() / loop()
+│           │   ├── UIController.cpp
+│           │   ├── MidiInput.cpp
+│           │   ├── SampleLoader.cpp
+│           │   └── ...
+│           └── wokwi.toml            ← Wokwi simulation config (VS Code extension)
+├── unit_tests/                       ← Catch2 tests (run on x86, validate DSP logic)
+├── CMakeLists.txt                    ← VST + unit test build (MSVC/Ninja/Xcode)
+└── docs/
+```
+
+### PlatformIO configuration
+
+`src/hardware/teensy/platformio.ini` points its source filter up to `src/dsp/`, so
+the DSP core compiles directly into the firmware:
+
+```ini
+[env:teensy41]
+platform  = teensy
+board     = teensy41
+framework = arduino
+build_flags =
+    -std=gnu++17
+    -I../../dsp
+build_src_filter =
+    +<.>          ; src/hardware/teensy/src/
+    +<../../dsp>  ; src/dsp/ — shared with VST build
+```
+
+Opening `src/hardware/teensy/` as a PlatformIO project in VS Code gives you
+IntelliSense, build, upload, and serial monitor for the Teensy target alongside
+the existing CMake VST project.
+
+### Wokwi simulation
+
+`wokwi.toml` ties the Wokwi simulator to the PlatformIO firmware binary. Once
+configured, **Run Simulation** in VS Code launches the compiled firmware against a
+virtual Teensy 4.1 with the wired circuit diagram:
+
+```toml
+[wokwi]
+version = 1
+firmware = ".pio/build/teensy41/firmware.hex"
+elf      = ".pio/build/teensy41/firmware.elf"
+```
+
+The circuit diagram (`diagram.json`, also in `src/hardware/teensy/`) describes the
+virtual hardware: potentiometers on analog pins, buttons on digital pins, LEDs.
+
+### What each tool covers
+
+| Concern | Tool | Coverage |
+|---|---|---|
+| DSP correctness (FreezeEffect, SamplerBank, …) | **Catch2** (`unit_tests/`) | Full numeric validation, runs on x86 |
+| ARM compilation correctness | **PlatformIO** build | Catches Teensy-incompatible C++ at compile time |
+| UI/control logic (button debouncing, pot mapping, stutter zones, sample-select cycling) | **Wokwi** simulator | No physical hardware needed |
+| WAV loader (`loadWavFromSD`) | **Wokwi** + SD card simulation | Basic SD I/O |
+| I2S audio output | Physical Teensy 4.1 only | No simulator substitute |
+| USB MIDI | Physical Teensy 4.1 only | `usbMIDI` not simulated by Wokwi |
+
+The combination of Catch2 + PlatformIO + Wokwi covers most of the port before
+touching real hardware. Only I2S audio output and USB MIDI require the physical board.
+
+---
+
+## 4. Porting Methodology
+
+The port is structured as five phases. Each phase has a clear tool and a pass/fail
+criterion before moving on.
+
+### Phase A — Compile gate (PlatformIO)
+
+**Goal:** Confirm `src/dsp/` has no hidden JUCE or platform-specific dependencies.
+
+1. Create `src/hardware/teensy/platformio.ini` with the config above.
+2. Create a minimal `src/hardware/teensy/src/main.cpp` that instantiates
+   `SamplerBank` and `FreezeEffect` and calls `prepare()` in `setup()` with no I/O.
+3. Run **PlatformIO: Build** from VS Code.
+4. **Pass criterion:** Zero compiler errors. Any error here is a real portability
+   issue in `src/dsp/` that must be fixed before continuing.
+
+### Phase B — DSP logic validation (Catch2)
+
+**Goal:** Ensure all DSP behaviour is correct at the numeric level before any
+hardware glue is written.
+
+- Run the existing Catch2 suite (`unit_tests/`). All tests must pass.
+- Add any missing tests for edge cases discovered during Phase A.
+- **Pass criterion:** 0 test failures. This baseline is the reference point for
+  the rest of the port — if a later phase breaks DSP output, this suite will catch it.
+
+### Phase C — Control logic simulation (Wokwi)
+
+**Goal:** Validate the entire UI control layer (pots, buttons, sample-select cycling,
+stutter zone mapping) without needing hardware.
+
+1. Build the `diagram.json` circuit in Wokwi (or use the VS Code Wokwi extension's
+   visual editor): 10 pots on analog pins, 6 buttons on digital pins, 4 LEDs.
+2. Implement `UIController` with real `analogRead` / `digitalRead` calls.
+3. Add `Serial.print()` traces for each control change.
+4. **Run Simulation** in VS Code — twist virtual pots, press virtual buttons.
+5. **Pass criterion:** Serial output shows correct DSP calls for every control
+   gesture. The sample-select button cycles pads 0→1→2→3→0. Stutter pot maps to
+   exactly 7 zones. All gain/start/end fractions are in range.
+
+### Phase D — Sample loading (Wokwi + SD simulation)
+
+**Goal:** Validate `loadWavFromSD()` without a physical SD card.
+
+1. Implement `SampleLoader.cpp` (see the WAV loader code in section 8).
+2. In Wokwi, add an SD card component to `diagram.json` and place
+   `sample0.wav`–`sample3.wav` (16-bit mono 48kHz WAV, prepared with ffmpeg)
+   in the Wokwi project's virtual SD root.
+3. Call `loadWavFromSD()` in `setup()` and trace the result over Serial.
+4. **Pass criterion:** Serial confirms all 4 samples loaded, correct frame count,
+   no error return. Trigger buttons play audible output once I2S is connected.
+
+### Phase E — Audio integration (physical hardware)
+
+**Goal:** End-to-end audio on the real Teensy 4.1.
+
+1. Wire the I2S codec (e.g., SGTL5000 on the Teensy Audio Shield).
+2. Implement `I2SCodecDriver` using the Teensy Audio library's `AudioStream`
+   interface or raw DMA.
+3. Wire USB MIDI (`usbMIDI` callbacks → `SamplerBank::triggerSample`).
+4. Upload via PlatformIO, connect headphones.
+5. **Pass criterion:** Triggering pads produces audio. Freeze engages. Stutter is
+   rhythmically correct at 120 BPM. No audio glitches under full 4-pad load.
+
+---
+
+## 5. JUCE → Teensy Translation Reference
+
+### 5.1 Audio I/O
+
+**JUCE:** `AudioProcessor::processBlock()` called by host
+```cpp
+void PluginProcessor::processBlock(AudioBuffer<float>& buffer, MidiBuffer& midiMessages)
+{
+    // Audio data already in buffer from host
+}
+```
+
+**Teensy:** Raw I2S codec ISR (or Teensy Audio library `AudioStream::update()`)
+```cpp
+void handleAudioInterrupt() {
+    float inputBuffer[BLOCK_SIZE];
+    readFromCodec(inputBuffer);
+
+    float outputBuffer[BLOCK_SIZE];
+    processAudio(inputBuffer, outputBuffer, BLOCK_SIZE);
+
+    writeToCodec(outputBuffer);
+}
+```
+
+### 5.2 MIDI Input
+
+**JUCE:** Host sends MIDI via `MidiBuffer` in processBlock()
+```cpp
+for (auto metadata : midiMessages) {
+    handleMidiMessage(metadata.getMessage());
+}
+```
+
+**Teensy:** USB MIDI or Serial MIDI
+```cpp
+void setup() {
+    usbMIDI.setHandleNoteOn(handleMidiNoteOn);
+}
+
+void handleMidiNoteOn(byte channel, byte note, byte velocity) {
+    samplerBank_.triggerSample(note % 4, 4.0, globalTempo);
+}
+```
+
+### 5.3 Tempo Sync
+
+**JUCE:** Host provides tempo via `PlayHead::getPosition()`
+```cpp
+double getTempo() const {
+    if (auto pos = getPlayHead()->getPosition())
+        if (auto bpm = pos->getBpm())
+            return bpm.value();
+    return 120.0;
+}
+```
+
+**Teensy:** Local tempo pot or external clock input
+```cpp
+double globalTempo = 120.0;
+
+void updateTempoKnob() {
+    int analogValue = analogRead(TEMPO_PIN);
+    globalTempo = map(analogValue, 0, 1023, 40, 200);  // 40–200 BPM
+}
+```
+
+### 5.4 Parameter Changes
+
+**JUCE:** Host sends parameter updates via `AudioProcessorValueTreeState`
+```cpp
+dsp::freezeEffect_.setDryWetMix(parameterValue);
+```
+
+**Teensy:** Local UI controls read in `loop()`
+```cpp
+void updateUI() {
+    freezeEffect_.setDryWetMix(readPotentiometer(DRY_WET_PIN) / 1023.0f);
+    freezeEffect_.setFrozen(readButton(FREEZE_BUTTON));
+}
+```
+
+### 5.5 Per-Sample Gain
+
+The DSP layer supports per-pad volume via `SamplerBank::setSampleGain(index, gain)`.
+In JUCE this is driven by the APVTS `sampleGain0-3` parameters; on Teensy it is
+driven by a single pot whose target pad is selected by the sample-select button.
+
+```cpp
+void updatePerSampleControls() {
+    // currentSampleTab is toggled by the sample-select button (0-3)
+    float gainValue = analogRead(SAMPLE_GAIN_POT) / 1023.0f * 2.0f;  // 0.0–2.0
+    samplerBank_.setSampleGain(currentSampleTab, gainValue);
+}
+```
+
+## 6. Planned Teensy Hardware Layout
 
 The Teensy version uses physical controls instead of a GUI window.
 All DSP calls are identical; only the control source changes.
@@ -159,10 +318,10 @@ All DSP calls are identical; only the control source changes.
 ### Buttons (digital pins)
 | Button | Function |
 |--------|----------|
-| Trigger 1–4 | Trigger sample pads 0-3 (replaces MIDI note-on) |
+| Trigger 1–4 | Trigger sample pads 0–3 (replaces MIDI note-on) |
 | Freeze | Toggle freeze on/off |
 | Series/Parallel | Toggle mixer routing mode |
-| Sample Select | Cycle through pads 0-3 for per-sample controls |
+| Sample Select | Cycle through pads 0–3 for per-sample controls |
 
 ### Potentiometers (analog pins)
 | Pot | Function | DSP call |
@@ -178,8 +337,8 @@ All DSP calls are identical; only the control source changes.
 | **Sample Start** | Per-pad start fraction (acts on selected pad) | `setSampleStartFraction()` |
 | **Sample End** | Per-pad end fraction (acts on selected pad) | `setSampleEndFraction()` |
 
-The "Sample Select" button selects which pad the per-sample pots (gain, start, end)
-currently control. An LED or small display indicates the active pad (1-4).
+The **Sample Select** button selects which pad the per-sample pots (gain, start, end)
+currently control. An LED or small display indicates the active pad (1–4).
 
 ### Stutter Rate Mapping
 The stutter pot maps to 7 discrete values (pot range divided into 7 zones):
@@ -192,7 +351,7 @@ int zone = analogRead(STUTTER_POT) * 7 / 1024;
 freezeEffect_.setStutterFraction(kStutterValues[zone]);
 ```
 
-## Minimal Teensy Example
+## 7. Minimal Teensy Example
 
 ```cpp
 // src/hardware/teensy/TeensySampler.cpp
@@ -268,7 +427,7 @@ void updatePerSampleControls() {
 }
 ```
 
-## Memory Considerations
+## 9. Memory Considerations
 
 **Teensy Memory Limits:**
 - Teensy 4.1: 8MB PSRAM (can be used for sample storage)
@@ -294,7 +453,7 @@ void audioCallback() {
 }
 ```
 
-## Sample Loading: The One Real Divergence
+## 8. Sample Loading: The One Real Divergence
 
 This is the area where the Teensy port **cannot share code** with the VST version.
 Everything else in `src/juce/` can simply be discarded and the `src/dsp/` core reused
@@ -423,40 +582,57 @@ ffmpeg -i input.mp3 -ar 48000 -ac 1 -c:a pcm_s16le output.wav
 Files should be named `sample0.wav`, `sample1.wav`, `sample2.wav`, `sample3.wav`
 and placed in the root of the SD card so `loadWavFromSD` can find them in `setup()`.
 
-## Testing Strategy
+## 10. Porting Checklist
 
-1. **Compile DSP core independently** on Teensy to verify no JUCE dependencies:
-   ```bash
-   // Create minimal Teensy sketch that compiles src/dsp/ without errors
-   ```
+### Phase A — Compile gate
+- [ ] Create `src/hardware/teensy/platformio.ini`
+- [ ] Create minimal `main.cpp` (no I/O, just `prepare()` calls)
+- [ ] PlatformIO build passes with zero errors
 
-2. **Stub out I/O first**: Create dummy functions for audio I/O and MIDI before full integration
+### Phase B — DSP logic validation
+- [ ] All Catch2 unit tests pass (`unit_tests/`)
+- [ ] Add tests for any edge cases found in Phase A
 
-3. **Validate DSP output**: Use Teensy audio library or external DAC to monitor output signal
+### Phase C — Control logic simulation (Wokwi)
+- [ ] Build `diagram.json` circuit (10 pots, 6 buttons, 4 LEDs)
+- [ ] Implement `UIController` with real `analogRead`/`digitalRead`
+- [ ] Serial output confirms correct DSP calls for every control
+- [ ] Sample-select cycling verified (0→1→2→3→0)
+- [ ] Stutter zone mapping verified (7 discrete zones)
+- [ ] All gain/start/end fractions confirmed in range
 
-4. **Integrate incrementally**: Add UI controls, preset storage, then advanced features
+### Phase D — Sample loading (Wokwi + SD)
+- [ ] Implement `SampleLoader.cpp` (WAV parser)
+- [ ] Add SD card component to `diagram.json`
+- [ ] Prepare test WAVs with ffmpeg (16-bit mono 48kHz)
+- [ ] Serial confirms all 4 samples loaded with correct frame count
+- [ ] `loadWavFromSD` returns no errors
 
-## Porting Checklist
+### Phase E — Audio integration (physical hardware)
+- [ ] Wire I2S codec (Teensy Audio Shield or equivalent)
+- [ ] Implement `I2SCodecDriver`
+- [ ] Wire USB MIDI (`usbMIDI` callbacks → `SamplerBank::triggerSample`)
+- [ ] Upload via PlatformIO
+- [ ] Trigger pads produce audio
+- [ ] Freeze engages and loops correctly
+- [ ] Stutter is rhythmically correct at 120 BPM
+- [ ] No audio glitches under full 4-pad load
 
-- [ ] Copy `src/dsp/` to Teensy project
-- [ ] Verify compilation with Teensy-specific includes only
-- [ ] Implement `AudioCodecDriver` (I2S interfacing)
-- [ ] Implement `MidiInput` (USB MIDI handling)
-- [ ] Create minimal `main()` loop
-- [ ] Test MIDI triggering
-- [ ] Test tempo sync with hardware tempo input
-- [ ] Integrate UI controls (4 trigger buttons + sample-select button)
-- [ ] Wire freeze pots (stutter, speed, dry/wet, loop start/end)
-- [ ] Wire per-sample pots (gain, start, end) + sample-select cycling
+### Phase F — Polish
 - [ ] Wire mixer controls (parallel toggle, input/sampler level)
-- [ ] Implement sample loading from SD card
+- [ ] Wire all freeze pots (stutter, speed, dry/wet, loop start/end)
+- [ ] Wire per-sample pots (gain, start, end) + sample-select cycling
 - [ ] Add preset storage (SD card)
 - [ ] Performance profiling and optimization
 
-## Debugging Tips
+---
 
-- Use `Serial.print()` for logging in audio callback (careful: may cause glitches)
-- Monitor CPU load with `AudioProcessorUsage`
-- Use external analyzer to verify audio output
+## 11. Debugging Tips
 
-See `src/hardware/teensy/` for full implementation when ready.
+- Use `Serial.print()` for logging — but not inside the audio ISR (may cause glitches)
+- Monitor CPU load with Teensy Audio library's `AudioProcessorUsage()`
+- Use Wokwi serial monitor to trace control changes before touching hardware
+- In Phase A/B, any compile errors in `src/dsp/` under PlatformIO must be fixed
+  in `src/dsp/` itself (not worked around), so the VST build stays in sync
+
+See `src/hardware/teensy/` for implementation files as they are created.

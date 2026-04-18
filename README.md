@@ -504,7 +504,34 @@ cmake .. -G Ninja -DCMAKE_CXX_COMPILER=clang++
 cmake --build .
 ```
 
+### Teensy 4.1 (PlatformIO)
+
+The Teensy firmware can be built using **PlatformIO** from within VS Code. The firmware shares
+the `src/dsp/` core with the VST build — any DSP fix is immediately available to both targets.
+
+```bash
+# Prerequisites: VS Code with PlatformIO extension installed
+# Open src/hardware/teensy/ as a PlatformIO project
+
+# Build
+platformio run -e teensy41
+
+# Upload to device
+platformio run -e teensy41 --target upload
+
+# Serial monitor
+platformio device monitor
+```
+
+Alternatively, open the project in VS Code with the **Wokwi** extension to simulate the Teensy
+with virtual pots, buttons, and an SD card before touching hardware. See **Porting to Teensy 4.1**
+below for the simulation strategy.
+
 ### Run Unit Tests
+
+The Catch2 test suite validates the DSP core (`src/dsp/`) on your development machine.
+These same tests remain valid after porting to Teensy — they form the numerical baseline
+for the port and catch any regressions.
 
 ```bash
 cd build
@@ -513,37 +540,60 @@ cmake --build . --config Release
 ./DSPTests                      # macOS / Linux
 ```
 
+**When porting to Teensy:** Run this suite first (Phase B of the porting methodology)
+to ensure all DSP logic is correct before any hardware glue is written.
+
 ## Development Roadmap
 
-### Phase 1: Completed ✓
+### VST Plugin Development
+
+#### Phase 1: Core DSP — Completed ✓
 - Project setup, CMakeLists.txt, DSP module structure
-- All 6 DSP modules implemented
-- Unit test suite (AudioBuffer, CircularBuffer, Sampler, SamplerBank, Mixer, FreezeEffect, Integration)
+- All 6 DSP modules implemented (pure C++17, zero JUCE dependencies)
+- Unit test suite with 100% core coverage
 
-### Phase 2: Completed ✓
-- JUCE integration (PluginProcessor, parameters, MIDI routing)
-- Full UI with freeze/mixer controls
-- MIDI triggering (C1, C2, C3, C4 mapped to samples 1–4)
-- Per-sample start/end region editing with waveform display
-- Tabbed sample editor with draggable markers
+#### Phase 2: JUCE Integration — Completed ✓
+- PluginProcessor (connects DSP to DAW audio/MIDI)
+- Full GUI with freeze, stutter, speed, dry/wet, loop boundary controls
+- Per-sample editor with waveform display and draggable markers
+- MIDI triggering (C1, C2, C3, C4 → samples 1–4)
 - Per-sample Obey Note Off toggle
-- Build verified (VST3 + Standalone)
+- Build verified (VST3 + Standalone on Windows, macOS, Linux)
 
-### Phase 3: In Progress
-- DAW testing (Reaper)
-- Preset system implementation
-- Unit test updates for new start/end fraction API
+#### Phase 3: Polish & Testing — In Progress
+- DAW testing (Reaper, Ableton, etc.)
+- Preset system (save/load full state + embedded samples)
+- File loading (WAV, MP3, FLAC via JUCE AudioFormatManager)
 
-### Phase 4: TODO
-- Teensy 4.1 hardware adaptation
-- Full testing and performance tuning
-- File loading (WAV, MP3, FLAC support)
-- Preset system
-- Freeze effect UI controls
+### Teensy 4.1 Hardware Port
 
-### Phase 4: TODO
-- Teensy 4.1 hardware adaptation
-- Full testing and performance tuning
+#### Phase A: Compile Gate — TODO
+- Set up `src/hardware/teensy/platformio.ini` with `src/dsp/` as shared source
+- Create minimal `main.cpp` that instantiates DSP modules
+- Verify PlatformIO build with zero compiler errors
+
+#### Phase B: DSP Validation — TODO
+- Run full Catch2 test suite to establish numeric baseline
+- Any phase after this that breaks DSP output will be caught immediately
+
+#### Phase C: Control Logic Simulation (Wokwi) — TODO
+- Build virtual circuit in Wokwi (pots, buttons, LEDs)
+- Implement `UIController` with real `analogRead`/`digitalRead`
+- Validate control-to-DSP-call mapping via Serial output
+- Confirm sample-select cycling and stutter zone mapping
+
+#### Phase D: Sample Loading (Wokwi + SD) — TODO
+- Implement WAV loader (`SampleLoader.cpp`)
+- Add SD card simulation to Wokwi circuit
+- Validate file parsing and PSRAM allocation
+
+#### Phase E: Hardware Audio Integration — TODO
+- Wire I2S codec (Teensy Audio Shield)
+- Implement `I2SCodecDriver` using Teensy Audio library
+- Wire USB MIDI (`usbMIDI` callbacks)
+- Verify end-to-end audio on real hardware
+
+See `docs/PORTING.md` for detailed methodology and Phase A–E breakdown.
 
 ## Usage (Once Complete)
 
@@ -557,9 +607,51 @@ cmake --build . --config Release
 8. Toggle sequential/parallel to change what gets frozen
 9. Save presets for later
 
-## Porting to Teensy
+## Porting to Teensy 4.1
 
-The DSP core (`src/dsp/`) has zero external dependencies — pure C++17. It can be compiled for Teensy 4.1 with no changes. See `docs/PORTING.md` for the hardware adaptation strategy and `docs/TEENSY_PERFORMANCE.md` for CPU budget calculations.
+The entire DSP core (`src/dsp/`) is **pure C++17 with zero JUCE dependencies**. It compiles on Teensy 4.1
+without any modifications — the same code runs on both VST and hardware.
+
+### Why This Works
+
+- No virtual function calls, no dynamic allocation in real-time audio paths
+- `std::atomic<>` for parameter changes (lock-free on ARM Cortex-M7)
+- Fixed buffer sizes, known at compile time
+- All timing and math is platform-agnostic
+
+### Porting Strategy
+
+The repository is structured as a **monorepo** where:
+
+1. **`src/dsp/`** — Shared between VST (CMake) and Teensy (PlatformIO). Never changes between targets.
+2. **`src/juce/`** — VST-specific JUCE wrapper. Discarded for Teensy.
+3. **`src/hardware/teensy/`** — New Teensy hardware glue (I2S codec, MIDI, UI controls, SD card loader).
+4. **`unit_tests/`** — Run on x86 to validate DSP logic. Pass/fail criteria for each porting phase.
+
+### The Five Phases
+
+The port is divided into five phases, each with a specific tool and pass/fail criterion:
+
+| Phase | Goal | Tool | Pass Criterion |
+|-------|------|------|----------------|
+| **A** | Compile gate: Confirm `src/dsp/` is clean C++17 | PlatformIO build | Zero compiler errors |
+| **B** | Numeric baseline: All DSP calculations correct | Catch2 unit tests | 0 test failures |
+| **C** | Control logic: UI→DSP mapping works | Wokwi simulator | Serial output confirms all controls map correctly |
+| **D** | File loading: WAV parser + PSRAM allocation works | Wokwi + SD sim | All 4 samples load, correct frame count |
+| **E** | Hardware audio: I2S + USB MIDI + real DSP | Physical Teensy 4.1 | Audio plays, freeze works, stutter is rhythmic |
+
+**Key insight:** Phases A–D use only the simulator + unit tests. Only Phase E needs physical hardware,
+and by then the port is 80% validated without touching a device.
+
+### Tools Used
+
+- **PlatformIO** — Targets Teensy 4.1 with `platformio.ini` pointing at shared `src/dsp/`
+- **Wokwi** — Simulates Teensy with virtual circuit (pots, buttons, SD card); runs compiled firmware
+- **Catch2** — Validates DSP numeric correctness before any hardware integration
+- **CMake** — Builds VST + unit tests on x86 (unchanged)
+
+See `docs/PORTING.md` for detailed phase-by-phase breakdown, hardware layout, and WAV loader implementation.
+See `docs/TEENSY_PERFORMANCE.md` for CPU budget calculations.
 
 ## License
 
