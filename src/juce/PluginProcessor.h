@@ -1,6 +1,7 @@
 #pragma once
 
 #include <juce_audio_processors/juce_audio_processors.h>
+#include <juce_audio_formats/juce_audio_formats.h>
 #include "SamplerBank.h"
 #include "Mixer.h"
 #include "FreezeEffect.h"
@@ -43,6 +44,12 @@ public:
     void getStateInformation(juce::MemoryBlock& destData) override;
     void setStateInformation(const void* data, int sizeInBytes) override;
 
+    // Public API for the editor
+    juce::AudioProcessorValueTreeState& getAPVTS() { return parameters_; }
+    void loadSample(int index, const juce::File& file);
+    juce::String getSampleName(int index) const;
+    const std::vector<float>& getSampleWaveform(int index) const;
+
 private:
     // DSP Modules
     SamplerBank samplerBank_;
@@ -51,10 +58,22 @@ private:
     
     // Parameters
     juce::AudioProcessorValueTreeState parameters_;
-    
+    static juce::AudioProcessorValueTreeState::ParameterLayout createParameterLayout();
+
+    // Audio file loading
+    juce::AudioFormatManager formatManager_;
+    juce::String sampleNames_[4];
+    std::vector<float> sampleWaveforms_[4];  // Copy for UI waveform display
+
+    // MIDI note-to-sample mapping: C1(24), C2(36), C3(48), C4(60)
+    static constexpr int kMidiNotes[4] = { 24, 36, 48, 60 };
+    static constexpr double kStutterValues[5] = { 1.0, 0.5, 0.25, 0.125, 0.0625 };
+    static int midiNoteToSampleIndex(int noteNumber);
+
     // Helpers
     double getTempo() const;
-    void handleMidiMessage(const juce::MidiMessage& msg);
+    void handleMidiNoteOn(const juce::MidiMessage& msg);
+    void handleMidiNoteOff(const juce::MidiMessage& msg);
     
     JUCE_DECLARE_NON_COPYABLE_WITH_LEAK_DETECTOR(PluginProcessor)
 };

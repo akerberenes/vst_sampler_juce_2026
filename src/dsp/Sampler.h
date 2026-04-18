@@ -28,12 +28,14 @@ public:
     int getSampleRate() const { return sampleRate_; }
     
     // Sample playback parameters
-    void setLoopMode(bool enable) { loopMode_.store(enable); }
-    bool getLoopMode() const { return loopMode_.load(); }
+    void setLoopMode(bool enable) { loopMode_ = enable; }
+    bool getLoopMode() const { return loopMode_; }
     
-    // Set fractional loop (e.g., 0.5 = half of sample, 1.0 = full sample)
-    void setLoopFraction(float fraction);
-    float getLoopFraction() const { return loopFraction_; }
+    // Set playback region as fractions of the full sample (0.0 to 1.0)
+    void setStartFraction(float fraction);
+    void setEndFraction(float fraction);
+    float getStartFraction() const { return startFraction_; }
+    float getEndFraction() const { return endFraction_; }
     
     // Trigger playback
     // beatDuration: how many beats to play (e.g., 4 beats = 1 bar at 4/4)
@@ -64,10 +66,12 @@ private:
     std::atomic<int> samplesTillStop_{0};
     
     bool loopMode_ = false;
-    float loopFraction_ = 1.0f;  // Full sample by default
+    float startFraction_ = 0.0f;
+    float endFraction_ = 1.0f;
     
-    // Calculate loop end in samples based on fraction
-    int getLoopEndInSamples() const;
+    // Calculate playback region in samples
+    int getStartInSamples() const;
+    int getEndInSamples() const;
     
     // Linear interpolation for smooth playback
     float interpolateSample(double position) const;

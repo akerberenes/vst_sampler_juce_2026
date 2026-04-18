@@ -41,14 +41,21 @@ juce_add_plugin(SamplerWithFreeze
     IS_SYNTH FALSE
     EDITOR_WANTS_KEYBOARD_FOCUS FALSE
     COPY_PLUGIN_AFTER_BUILD TRUE
+    VST3_COPY_DIR "C:/JUCE/plugins/vst"
 )
 
 target_sources(SamplerWithFreeze PRIVATE
     src/juce/PluginProcessor.cpp
     src/juce/PluginEditor.cpp
+    src/juce/WaveformDisplay.cpp
+    src/juce/SampleTabPanel.cpp
 )
 
 target_compile_features(SamplerWithFreeze PRIVATE cxx_std_17)
+target_compile_definitions(SamplerWithFreeze PUBLIC
+    JUCE_VST3_CAN_REPLACE_VST2=0
+    JUCE_WEB_BROWSER=0
+)
 target_include_directories(SamplerWithFreeze PRIVATE src)
 target_link_libraries(SamplerWithFreeze PRIVATE
     juce::juce_audio_basics
@@ -62,6 +69,7 @@ target_link_libraries(SamplerWithFreeze PRIVATE
     juce::juce_graphics
     juce::juce_gui_basics
     juce::juce_gui_extra
+    juce::juce_audio_utils
     SamplerDSP
     AudioFileHandling
 )

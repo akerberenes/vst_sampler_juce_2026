@@ -21,9 +21,14 @@ void Sampler::clearSampleData()
     isPlaying_.store(false);
 }
 
-void Sampler::setLoopFraction(float fraction)
+void Sampler::setStartFraction(float fraction)
 {
-    loopFraction_ = std::clamp(fraction, 0.01f, 1.0f);
+    startFraction_ = std::clamp(fraction, 0.0f, 1.0f);
+}
+
+void Sampler::setEndFraction(float fraction)
+{
+    endFraction_ = std::clamp(fraction, 0.0f, 1.0f);
 }
 
 void Sampler::trigger(double beatDuration, double tempoInBPM)
@@ -35,7 +40,7 @@ void Sampler::trigger(double beatDuration, double tempoInBPM)
     double durationSeconds = (beatDuration * 60.0) / tempoInBPM;
     int durationSamples = static_cast<int>(durationSeconds * sampleRate_);
     
-    playheadPosition_.store(0.0);
+    playheadPosition_.store(static_cast<double>(getStartInSamples()));
     samplesTillStop_.store(durationSamples);
     isPlaying_.store(true);
 }
@@ -57,7 +62,10 @@ void Sampler::processBlock(float* outAudio, int numSamples, double tempoInBPM)
     // Load atomics once before the loop (only audio thread runs this)
     double pos = playheadPosition_.load();
     int remaining = samplesTillStop_.load();
-    double loopEnd = getLoopEndInSamples();
+    int regionStart = getStartInSamples();
+    int regionEnd = getEndInSamples();
+    if (regionEnd <= regionStart)
+        regionEnd = regionStart + 1;
     
     for (int i = 0; i < numSamples; ++i)
     {
@@ -73,8 +81,19 @@ void Sampler::processBlock(float* outAudio, int numSamples, double tempoInBPM)
         outAudio[i] = interpolateSample(pos);
         
         pos += 1.0;
-        if (loopMode_ && pos >= loopEnd)
-            pos = 0.0;
+        if (pos >= regionEnd)
+        {
+            if (loopMode_)
+                pos = static_cast<double>(regionStart);
+            else
+            {
+                isPlaying_.store(false);
+                playheadPosition_.store(pos);
+                samplesTillStop_.store(0);
+                std::fill(outAudio + i + 1, outAudio + numSamples, 0.0f);
+                return;
+            }
+        }
         
         --remaining;
     }
@@ -92,11 +111,13 @@ void Sampler::stop()
 
 float Sampler::getPlaybackPosition() const
 {
-    int loopEnd = getLoopEndInSamples();
-    if (loopEnd <= 0)
+    int start = getStartInSamples();
+    int end = getEndInSamples();
+    int regionLen = end - start;
+    if (regionLen <= 0)
         return 0.0f;
     
-    return static_cast<float>(playheadPosition_.load() / loopEnd);
+    return static_cast<float>((playheadPosition_.load() - start) / regionLen);
 }
 
 float Sampler::getSampleDurationInSeconds() const
@@ -107,13 +128,22 @@ float Sampler::getSampleDurationInSeconds() const
     return static_cast<float>(sampleData_.size()) / (channels_ * sampleRate_);
 }
 
-int Sampler::getLoopEndInSamples() const
+int Sampler::getStartInSamples() const
 {
     if (channels_ <= 0)
         return 0;
     
     int totalSamples = sampleData_.size() / channels_;
-    return static_cast<int>(totalSamples * loopFraction_);
+    return static_cast<int>(totalSamples * startFraction_);
+}
+
+int Sampler::getEndInSamples() const
+{
+    if (channels_ <= 0)
+        return 0;
+    
+    int totalSamples = sampleData_.size() / channels_;
+    return static_cast<int>(totalSamples * endFraction_);
 }
 
 float Sampler::interpolateSample(double position) const
@@ -121,19 +151,18 @@ float Sampler::interpolateSample(double position) const
     if (sampleData_.empty() || channels_ <= 0)
         return 0.0f;
     
-    int loopEnd = getLoopEndInSamples();
-    if (loopEnd <= 0)
+    int totalSamples = sampleData_.size() / channels_;
+    if (totalSamples <= 0)
         return 0.0f;
     
-    // Simple linear interpolation
-    int idx = static_cast<int>(position) % loopEnd;
-    double frac = position - static_cast<double>(static_cast<int>(position));
+    int idx = static_cast<int>(position);
+    double frac = position - static_cast<double>(idx);
     
-    if (idx < 0 || idx >= loopEnd)
+    if (idx < 0 || idx >= totalSamples)
         return 0.0f;
     
-    float sample1 = sampleData_[idx * channels_];  // First channel
-    float sample2 = idx + 1 < loopEnd ? sampleData_[(idx + 1) * channels_] : sampleData_[0];
+    float sample1 = sampleData_[idx * channels_];
+    float sample2 = (idx + 1 < totalSamples) ? sampleData_[(idx + 1) * channels_] : 0.0f;
     
-    return sample1 + frac * (sample2 - sample1);
+    return sample1 + static_cast<float>(frac) * (sample2 - sample1);
 }

@@ -81,8 +81,14 @@ void SamplerBank::setSampleLoopMode(int noteIndex, bool enable)
         samplers_[noteIndex].setLoopMode(enable);
 }
 
-void SamplerBank::setSampleLoopFraction(int noteIndex, float fraction)
+void SamplerBank::setSampleStartFraction(int noteIndex, float fraction)
 {
     if (noteIndex >= 0 && noteIndex < NUM_SAMPLES)
-        samplers_[noteIndex].setLoopFraction(fraction);
+        samplers_[noteIndex].setStartFraction(fraction);
+}
+
+void SamplerBank::setSampleEndFraction(int noteIndex, float fraction)
+{
+    if (noteIndex >= 0 && noteIndex < NUM_SAMPLES)
+        samplers_[noteIndex].setEndFraction(fraction);
 }

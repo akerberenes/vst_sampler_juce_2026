@@ -44,7 +44,8 @@ public:
     
     // Loop configuration per sample
     void setSampleLoopMode(int noteIndex, bool enable);
-    void setSampleLoopFraction(int noteIndex, float fraction);
+    void setSampleStartFraction(int noteIndex, float fraction);
+    void setSampleEndFraction(int noteIndex, float fraction);
     
 private:
     std::array<Sampler, NUM_SAMPLES> samplers_;
