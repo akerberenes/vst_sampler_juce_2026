@@ -38,7 +38,7 @@ PluginEditor::PluginEditor(PluginProcessor& processor)
     stutterLabel_.setText("Stutter", juce::dontSendNotification);
     addAndMakeVisible(stutterRateBox_);
     stutterRateBox_.addItemList(
-        {"1 beat", "1/2 beat", "1/4 beat", "1/8 beat", "1/16 beat"}, 1);
+        {"1 beat", "1/2 beat", "1/4 beat", "1/8 beat", "1/16 beat", "1/32 beat", "1/64 beat"}, 1);
     stutterAttachment_ = std::make_unique<ComboBoxAttachment>(
         processor_.getAPVTS(), "stutterRate", stutterRateBox_);
 

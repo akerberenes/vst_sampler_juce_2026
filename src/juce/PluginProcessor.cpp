@@ -113,8 +113,12 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
         auto si = juce::String(i);
         float ss = *parameters_.getRawParameterValue("sampleStart" + si);
         float se = *parameters_.getRawParameterValue("sampleEnd" + si);
+        // Per-pad output volume (0.0–2.0). Read each block so the UI slider responds
+        // in real time without needing a separate listener.
+        float sg = *parameters_.getRawParameterValue("sampleGain" + si);
         samplerBank_.setSampleStartFraction(i, ss);
         samplerBank_.setSampleEndFraction(i, se);
+        samplerBank_.setSampleGain(i, sg);
     }
 
     // --- Copy input BEFORE writing output ---
@@ -314,7 +318,7 @@ juce::AudioProcessorValueTreeState::ParameterLayout PluginProcessor::createParam
     // Stutter rate: index into kStutterValues[]. Presented as a choice (drop-down).
     params.push_back(std::make_unique<juce::AudioParameterChoice>(
         juce::ParameterID{"stutterRate", 1}, "Stutter Rate",
-        juce::StringArray{"1 beat", "1/2 beat", "1/4 beat", "1/8 beat", "1/16 beat"}, 3));
+        juce::StringArray{"1 beat", "1/2 beat", "1/4 beat", "1/8 beat", "1/16 beat", "1/32 beat", "1/64 beat"}, 3));
     // Default index 3 = "1/8 beat" (kStutterValues[3] = 0.125).
 
     // Playback speed: 0.25x to 4x with a skew factor of 0.5 (more resolution near 1x).
@@ -354,6 +358,13 @@ juce::AudioProcessorValueTreeState::ParameterLayout PluginProcessor::createParam
             juce::ParameterID{"sampleEnd" + si, 1},
             "Sample End " + juce::String(i + 1),
             juce::NormalisableRange<float>(0.0f, 1.0f), 1.0f));
+
+        // Per-pad output volume. 0.0 = silence, 1.0 = unity gain, 2.0 = +6 dB.
+        // The slider range matches Sampler::setGain()'s accepted range.
+        params.push_back(std::make_unique<juce::AudioParameterFloat>(
+            juce::ParameterID{"sampleGain" + si, 1},
+            "Sample Gain " + juce::String(i + 1),
+            juce::NormalisableRange<float>(0.0f, 2.0f), 1.0f));
     }
 
     // --- Mixer controls ---

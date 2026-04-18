@@ -35,6 +35,13 @@ void Sampler::setEndFraction(float fraction)
     endFraction_ = std::clamp(fraction, 0.0f, 1.0f);
 }
 
+void Sampler::setGain(float gain)
+{
+    // Clamp to [0, 2]: gives a useful range (silence → 6 dB boost) without
+    // allowing values that would instantly clip everything downstream.
+    gain_.store(std::clamp(gain, 0.0f, 2.0f));
+}
+
 void Sampler::trigger(double beatDuration, double tempoInBPM)
 {
     if (!hasSampleData())
@@ -73,6 +80,7 @@ void Sampler::processBlock(float* outAudio, int numSamples, double tempoInBPM)
     // doing them once per block (not once per sample) is much more efficient.
     double pos       = playheadPosition_.load();
     int remaining    = samplesTillStop_.load();
+    float gain       = gain_.load();  // Per-pad volume (see setGain).
     int regionStart  = getStartInSamples();
     int regionEnd    = getEndInSamples();
 
@@ -93,8 +101,9 @@ void Sampler::processBlock(float* outAudio, int numSamples, double tempoInBPM)
             return;
         }
 
-        // Write the interpolated sample at the current fractional playhead position.
-        outAudio[i] = interpolateSample(pos);
+        // Write the interpolated sample at the current fractional playhead position,
+        // scaled by the per-pad gain (set via setGain(), default 1.0 = unity).
+        outAudio[i] = interpolateSample(pos) * gain;
 
         // Advance playhead by one sample (normal 1× speed).
         pos += 1.0;

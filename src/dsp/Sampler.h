@@ -79,6 +79,16 @@ public:
     void setLoopMode(bool enable) { loopMode_ = enable; }
     bool getLoopMode() const { return loopMode_; }
 
+    // --- Per-pad output volume ---
+
+    // Set the output gain multiplier applied to every sample this pad produces.
+    // 0.0 = silence, 1.0 = unity gain (default), 2.0 = 6 dB boost (~double amplitude).
+    // Values are clamped to [0.0, 2.0] to prevent accidental extreme amplification.
+    // The gain is applied BEFORE SamplerBank's 0.25 attenuation stage, so the
+    // effective range reaching the mix bus is [0.0, 0.5] per pad.
+    void setGain(float gain);
+    float getGain() const { return gain_.load(); }
+
     // --- Playback region ---
 
     // Set the playback start point as a fraction of the full loaded sample (0.0–1.0).
@@ -154,6 +164,10 @@ private:
     // Active region boundaries as fractions of sampleData_ length.
     float startFraction_ = 0.0f;
     float endFraction_ = 1.0f;
+
+    // Output volume multiplier. Atomic so the UI thread can write it safely
+    // while the audio thread reads it inside processBlock().
+    std::atomic<float> gain_{1.0f};
 
     // Convert startFraction_ to an absolute integer sample index in sampleData_.
     int getStartInSamples() const;

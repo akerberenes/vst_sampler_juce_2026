@@ -38,6 +38,22 @@ SampleTabPanel::SampleTabPanel(PluginProcessor& processor)
                 p->setValueNotifyingHost(p->convertTo0to1(end));
         };
 
+        // --- Volume slider ---
+        // This slider maps directly to the "sampleGainN" APVTS parameter.
+        // SliderAttachment syncs it automatically: moving the slider updates the
+        // parameter; DAW automation updates the slider. We use addChildComponent
+        // so it is hidden until this tab is selected (same pattern as above).
+        addChildComponent(tabs_[i].volumeLabel);
+        tabs_[i].volumeLabel.setText("Volume", juce::dontSendNotification);
+        tabs_[i].volumeLabel.setFont(juce::Font(12.0f));
+        tabs_[i].volumeLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+        addChildComponent(tabs_[i].volumeSlider);
+        tabs_[i].volumeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
+        tabs_[i].volumeSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 45, 20);
+        tabs_[i].gainAttachment = std::make_unique<SliderAttachment>(
+            processor_.getAPVTS(), "sampleGain" + juce::String(i),
+            tabs_[i].volumeSlider);
+
         // --- Obey Note Off toggle ---
         // The ButtonAttachment automatically syncs the toggle state with the APVTS
         // parameter "obeyNoteOff0"-"obeyNoteOff3". No manual getValue/setValue needed.
@@ -99,6 +115,8 @@ void SampleTabPanel::selectTab(int index)
         tabs_[i].loadButton.setVisible(visible);
         tabs_[i].midiLabel.setVisible(visible);
         tabs_[i].nameLabel.setVisible(visible);
+        tabs_[i].volumeLabel.setVisible(visible);
+        tabs_[i].volumeSlider.setVisible(visible);
     }
 
     updateTabAppearance();  // Highlight the active tab button.
@@ -163,11 +181,18 @@ void SampleTabPanel::resized()
     cy += rowH + pad;
 
     // Row 2: Waveform display (takes the bulk of the available height)
-    int wfH = ch - rowH * 2 - pad * 4;
+    // Reduced by one extra row (rowH + pad) to make room for the volume slider row.
+    int wfH = ch - rowH * 3 - pad * 5;
     tabs_[i].waveform.setBounds(pad, cy, cw, wfH);
     cy += wfH + pad;
 
-    // Row 3: Obey Note Off toggle
+    // Row 3: Volume slider
+    // The label sits to the left; the slider takes the remaining width.
+    tabs_[i].volumeLabel.setBounds(pad, cy, 55, rowH);
+    tabs_[i].volumeSlider.setBounds(pad + 55, cy, cw - 55, rowH);
+    cy += rowH + pad;
+
+    // Row 4: Obey Note Off toggle
     tabs_[i].obeyNoteOffButton.setBounds(pad, cy, 160, rowH);
 }
 

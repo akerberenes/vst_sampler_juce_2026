@@ -91,6 +91,11 @@ public:
     // Set the playback end point (0.0–1.0) for pad `noteIndex`.
     void setSampleEndFraction(int noteIndex, float fraction);
 
+    // Set the output volume for pad `noteIndex`.
+    // Forwards to Sampler::setGain(); see that method for the full range description.
+    // 0.0 = silence, 1.0 = unity (default), 2.0 = +6 dB boost.
+    void setSampleGain(int noteIndex, float gain);
+
 private:
     // Fixed-size array of 4 Sampler objects.
     // std::array is preferred over std::vector when the size is a compile-time constant

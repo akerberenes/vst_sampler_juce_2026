@@ -81,7 +81,12 @@ private:
         juce::TextButton   loadButton;          // Opens the file chooser.
         juce::Label        midiLabel;           // Shows "MIDI: C1" etc.
         juce::Label        nameLabel;           // Shows the loaded filename.
+        // Volume slider: controls the per-pad output gain sent to the DSP layer.
+        // Range 0.0 (silence) → 1.0 (unity) → 2.0 (+6 dB boost).
+        juce::Label  volumeLabel;
+        juce::Slider volumeSlider;
         std::unique_ptr<ButtonAttachment> obeyAttachment; // Connects button to APVTS.
+        std::unique_ptr<SliderAttachment> gainAttachment; // Connects slider to APVTS sampleGain.
     };
     TabContent tabs_[4];
 

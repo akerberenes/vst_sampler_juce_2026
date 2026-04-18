@@ -109,3 +109,10 @@ void SamplerBank::setSampleEndFraction(int noteIndex, float fraction)
     if (noteIndex >= 0 && noteIndex < NUM_SAMPLES)
         samplers_[noteIndex].setEndFraction(fraction);
 }
+
+void SamplerBank::setSampleGain(int noteIndex, float gain)
+{
+    // Range validation is handled inside Sampler::setGain() so no need to repeat it here.
+    if (noteIndex >= 0 && noteIndex < NUM_SAMPLES)
+        samplers_[noteIndex].setGain(gain);
+}

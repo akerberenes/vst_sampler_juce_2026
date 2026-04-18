@@ -159,8 +159,9 @@ private:
     static constexpr int kMidiNotes[4] = { 24, 36, 48, 60 };
 
     // Stutter rate values indexed by the "stutterRate" AudioParameterChoice.
-    // Each value is a fraction of one beat (1.0=whole beat, 0.0625=1/16 beat).
-    static constexpr double kStutterValues[5] = { 1.0, 0.5, 0.25, 0.125, 0.0625 };
+    // Each value is a fraction of one beat (1.0=whole beat, 0.015625=1/64 beat).
+    // The array now has 7 entries matching the 7-item StringArray in createParameterLayout().
+    static constexpr double kStutterValues[7] = { 1.0, 0.5, 0.25, 0.125, 0.0625, 0.03125, 0.015625 };
 
     // Convert a MIDI note number to a pad index (0-3), or -1 if not mapped.
     static int midiNoteToSampleIndex(int noteNumber);

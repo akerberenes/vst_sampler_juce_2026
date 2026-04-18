@@ -32,14 +32,18 @@ Minimum Headroom: 30% reserved for:
 ### Example: How Many Samplers Can We Run?
 ```
 4 Samplers × 120 cycles/sample = 480 cycles/sample
+  (includes per-pad gain multiply: 1 extra mult = +2 cycles/sample/pad)
 CircularBuffer read + interpolate = 20 cycles/sample
 Mixer (sequential mode) = 8 cycles/sample
-Total DSP per sample = 508 cycles
+Total DSP per sample = 516 cycles
 
 Available: 8,742 cycles/sample
-Used: 508 cycles/sample
-Utilization: 5.8% ✓ (Lots of room for freeze effect)
+Used: 516 cycles/sample
+Utilization: 5.9% ✓ (Lots of room for freeze effect)
 ```
+
+Note: the per-pad gain costs only 1 extra multiply per sample per pad
+(2 cycles × 4 pads = 8 cycles/sample total). Negligible.
 
 ---
 
@@ -288,16 +292,19 @@ Total Available:             5.33 ms = 3,198,000 cycles
 Audio DSP Budget (70%):      2,238,600 cycles
 
 Breakdown:
-├─ Sampler (4 × 120 cyc):      122,880 cycles (5%)
-├─ CircularBuffer read:         5,120 cycles (0.2%)
-├─ Mixer:                       2,048 cycles (0.1%)
-├─ FreezeEffect orchestration:  20,480 cycles (0.9%)
-├─ Linear interpolation:        10,240 cycles (0.5%)
-├─ Stutter calculations:        20,480 cycles (0.9%)
-└─ Margin (for future growth):  2,057,352 cycles (92%) ✓✓✓
+├─ Sampler (4 × 120 cyc + gain):    123,904 cycles (5.1%)
+├─ CircularBuffer read:             5,120 cycles (0.2%)
+├─ Mixer:                           2,048 cycles (0.1%)
+├─ FreezeEffect orchestration:      20,480 cycles (0.9%)
+├─ Linear interpolation:            10,240 cycles (0.5%)
+├─ Stutter calculations:            20,480 cycles (0.9%)
+└─ Margin (for future growth):      2,056,328 cycles (92%) ✓✓✓
 ```
 
-All current components use **only ~6.6% of available audio CPU.**
+All current components use **only ~7.7% of available audio CPU.**
+The new per-pad gain feature adds < 0.1% CPU overhead (8 cycles/sample).
+The additional 1/32 and 1/64 stutter rates add zero extra cost—
+the stutter calculation runs once per block regardless of the fraction value.
 
 This leaves massive room for:
 - Additional effects (reverb, delay, filtering)
