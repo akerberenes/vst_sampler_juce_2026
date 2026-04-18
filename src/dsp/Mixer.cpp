@@ -5,10 +5,12 @@
 Mixer::Mixer()
     : inputLevel_(1.0f), samplerLevel_(1.0f)
 {
+    // Both levels default to 1.0 (unity gain, no attenuation).
 }
 
 void Mixer::setInputLevel(float level)
 {
+    // Clamp to [0, 1] so the level can't boost beyond unity or go negative.
     inputLevel_.store(std::clamp(level, 0.0f, 1.0f));
 }
 
@@ -18,37 +20,44 @@ void Mixer::setSamplerLevel(float level)
 }
 
 void Mixer::processBlock(const float* inputAudio, const float* samplerAudio,
-                        float* outputAudio, int numSamples)
+                         float* outputAudio, int numSamples)
 {
     if (!outputAudio || numSamples <= 0)
         return;
-    
+
+    // Read the current mode once (one atomic load per block, not per sample).
     Mode currentMode = getMode();
-    
+
     if (currentMode == Mode::Parallel)
     {
-        // Parallel: only sampler output goes to freeze buffer
-        // Input is isolated (mixed back in by PluginProcessor)
-        float samplerLevel = samplerLevel_.load();
+        // Parallel: the freeze effect only sees the sampler output.
+        // The input audio is NOT included here; PluginProcessor adds it back
+        // to the final output AFTER the freeze step completes.
+        float sl = samplerLevel_.load();
         if (samplerAudio)
         {
             for (int i = 0; i < numSamples; ++i)
-                outputAudio[i] = samplerAudio[i] * samplerLevel;
+                outputAudio[i] = samplerAudio[i] * sl;
         }
         else
+        {
+            // No sampler audio (no samples loaded/playing): output silence.
             std::fill(outputAudio, outputAudio + numSamples, 0.0f);
+        }
     }
     else  // Sequential
     {
-        // Sequential: mix input + sampler
-        float inputLevel = inputLevel_.load();
-        float samplerLevel = samplerLevel_.load();
-        
+        // Sequential: blend input + sampler before the freeze effect captures them.
+        // Both are attenuated by their respective level knobs.
+        float il = inputLevel_.load();
+        float sl = samplerLevel_.load();
+
         for (int i = 0; i < numSamples; ++i)
         {
-            float input = inputAudio ? inputAudio[i] * inputLevel : 0.0f;
-            float sampler = samplerAudio ? samplerAudio[i] * samplerLevel : 0.0f;
-            outputAudio[i] = input + sampler;
+            // If a pointer is null, treat that source as silence (0.0f).
+            float in  = inputAudio   ? inputAudio[i]   * il : 0.0f;
+            float smp = samplerAudio ? samplerAudio[i] * sl : 0.0f;
+            outputAudio[i] = in + smp;
         }
     }
 }
