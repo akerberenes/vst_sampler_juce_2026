@@ -55,8 +55,6 @@ public:
     
     // Buffer info
     int getSize() const { return buffer_.size(); }
-    int getSampleRate() const { return sampleRate_; }
-    void setSampleRate(int sr) { sampleRate_ = sr; }
     
     // Get buffer for direct access (use carefully)
     const float* getBuffer() const { return buffer_.data(); }
@@ -70,7 +68,6 @@ private:
     
     float loopStartFraction_ = 0.0f;
     float loopEndFraction_ = 1.0f;
-    int sampleRate_ = 48000;
     
     // Helper: get actual read position within loop boundaries
     double getLoopAdjustedReadPos() const;

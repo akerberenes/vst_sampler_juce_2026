@@ -54,32 +54,34 @@ void Sampler::processBlock(float* outAudio, int numSamples, double tempoInBPM)
         return;
     }
     
-    // Process samples
+    // Load atomics once before the loop (only audio thread runs this)
+    double pos = playheadPosition_.load();
+    int remaining = samplesTillStop_.load();
+    double loopEnd = getLoopEndInSamples();
+    
     for (int i = 0; i < numSamples; ++i)
     {
-        int remaining = samplesTillStop_.load();
         if (remaining <= 0)
         {
             isPlaying_.store(false);
+            playheadPosition_.store(pos);
+            samplesTillStop_.store(0);
             std::fill(outAudio + i, outAudio + numSamples, 0.0f);
             return;
         }
         
-        // Get interpolated sample
-        outAudio[i] = interpolateSample(playheadPosition_.load());
+        outAudio[i] = interpolateSample(pos);
         
-        // Advance playhead
-        double loopEnd = getLoopEndInSamples();
-        double nextPos = playheadPosition_.load() + 1.0;
+        pos += 1.0;
+        if (loopMode_ && pos >= loopEnd)
+            pos = 0.0;
         
-        if (loopMode_ && nextPos >= loopEnd)
-        {
-            nextPos = 0.0;  // Loop back to start
-        }
-        
-        playheadPosition_.store(nextPos);
-        samplesTillStop_.store(remaining - 1);
+        --remaining;
     }
+    
+    // Store atomics once after the loop
+    playheadPosition_.store(pos);
+    samplesTillStop_.store(remaining);
 }
 
 void Sampler::stop()

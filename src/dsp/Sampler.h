@@ -2,7 +2,6 @@
 
 #include <vector>
 #include <atomic>
-#include <optional>
 #include <cstring>
 
 /**

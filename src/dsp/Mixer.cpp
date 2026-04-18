@@ -28,9 +28,13 @@ void Mixer::processBlock(const float* inputAudio, const float* samplerAudio,
     if (currentMode == Mode::Parallel)
     {
         // Parallel: only sampler output goes to freeze buffer
-        // Input is isolated
+        // Input is isolated (mixed back in by PluginProcessor)
+        float samplerLevel = samplerLevel_.load();
         if (samplerAudio)
-            std::memcpy(outputAudio, samplerAudio, numSamples * sizeof(float));
+        {
+            for (int i = 0; i < numSamples; ++i)
+                outputAudio[i] = samplerAudio[i] * samplerLevel;
+        }
         else
             std::fill(outputAudio, outputAudio + numSamples, 0.0f);
     }

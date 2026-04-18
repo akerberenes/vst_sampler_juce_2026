@@ -6,7 +6,7 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # JUCE configuration
 set(JUCE_BUILD_HELPER_TOOLS OFF)
-add_subdirectory(JUCE)
+add_subdirectory("C:/JUCE" "${CMAKE_BINARY_DIR}/JUCE")
 
 # DSP Module Library (platform-agnostic, no JUCE)
 add_library(SamplerDSP STATIC
@@ -66,12 +66,8 @@ target_link_libraries(SamplerWithFreeze PRIVATE
     AudioFileHandling
 )
 
-# Tests (optional, requires Catch2)
-enable_testing()
-add_executable(DSPTests
-    tests/CircularBufferTest.cpp
-    tests/SamplerTest.cpp
-)
-target_link_libraries(DSPTests PRIVATE SamplerDSP)
-target_compile_features(DSPTests PRIVATE cxx_std_17)
-add_test(NAME DSPTests COMMAND DSPTests)
+# Unit Tests (using Catch2 header-only)
+# Add tests subdirectory if it exists
+if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/unit_tests/CMakeLists.txt")
+    add_subdirectory(unit_tests)
+endif()

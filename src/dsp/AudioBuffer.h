@@ -35,7 +35,6 @@ public:
 private:
     std::vector<float> data_;
     std::vector<float*> writePointers_;
-    std::vector<const float*> readPointers_;
     int numChannels_ = 0;
     int numFrames_ = 0;
 };

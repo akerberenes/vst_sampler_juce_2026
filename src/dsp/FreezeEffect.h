@@ -2,7 +2,6 @@
 
 #include "CircularBuffer.h"
 #include <atomic>
-#include <memory>
 
 /**
  * FreezeEffect
@@ -23,8 +22,7 @@ public:
     enum class State : uint8_t
     {
         Recording = 0,      // Continuously capturing audio
-        Frozen = 1,         // Buffer is frozen, looping
-        Manipulating = 2    // User adjusting stutter/speed/loop bounds
+        Frozen = 1          // Buffer is frozen, looping
     };
     
     explicit FreezeEffect(int maxBufferSizeInSamples = 0);
@@ -33,11 +31,11 @@ public:
     // Configuration
     void prepare(int sampleRate, int maxBlockSize);
     void setBufferSizeInSamples(int size);
-    int getBufferSizeInSamples() const { return freezeBuffer_->getSize(); }
+    int getBufferSizeInSamples() const { return freezeBuffer_.getSize(); }
     
     // Freeze state control
     void setFrozen(bool b);
-    bool isFrozen() const { return freezeBuffer_->isFrozen(); }
+    bool isFrozen() const { return freezeBuffer_.isFrozen(); }
     
     // Main processing
     // Input: audio to capture/freeze
@@ -52,14 +50,14 @@ public:
     
     // Playback speed (pitch shift)
     // 1.0 = normal, 0.5 = half speed/pitch, 2.0 = double
-    void setPlaybackSpeed(float speed) { freezeBuffer_->setPlaybackSpeed(speed); }
-    float getPlaybackSpeed() const { return freezeBuffer_->getPlaybackSpeed(); }
+    void setPlaybackSpeed(float speed) { freezeBuffer_.setPlaybackSpeed(speed); }
+    float getPlaybackSpeed() const { return freezeBuffer_.getPlaybackSpeed(); }
     
     // Loop boundary control (fraction of buffer)
-    void setLoopStart(float fraction) { freezeBuffer_->setLoopStart(fraction); }
-    void setLoopEnd(float fraction) { freezeBuffer_->setLoopEnd(fraction); }
-    float getLoopStart() const { return freezeBuffer_->getLoopStart(); }
-    float getLoopEnd() const { return freezeBuffer_->getLoopEnd(); }
+    void setLoopStart(float fraction) { freezeBuffer_.setLoopStart(fraction); }
+    void setLoopEnd(float fraction) { freezeBuffer_.setLoopEnd(fraction); }
+    float getLoopStart() const { return freezeBuffer_.getLoopStart(); }
+    float getLoopEnd() const { return freezeBuffer_.getLoopEnd(); }
     
     // Freeze parameters
     void setDryWetMix(float wet);  // 0.0 = dry (no freeze), 1.0 = full freeze
@@ -70,7 +68,7 @@ public:
     float getBufferFillPercentage() const;  // Debug: how full is the freeze buffer?
     
 private:
-    std::unique_ptr<CircularBuffer> freezeBuffer_;
+    CircularBuffer freezeBuffer_;
     int sampleRate_ = 48000;
     
     std::atomic<uint8_t> state_{static_cast<uint8_t>(State::Recording)};

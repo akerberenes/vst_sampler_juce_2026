@@ -3,8 +3,8 @@
 #include <algorithm>
 
 FreezeEffect::FreezeEffect(int maxBufferSizeInSamples)
+    : freezeBuffer_(maxBufferSizeInSamples)
 {
-    freezeBuffer_ = std::make_unique<CircularBuffer>(maxBufferSizeInSamples);
 }
 
 void FreezeEffect::prepare(int sampleRate, int maxBlockSize)
@@ -14,29 +14,27 @@ void FreezeEffect::prepare(int sampleRate, int maxBlockSize)
     // Default 2 bars at 120 BPM, 48kHz
     // 2 bars = 8 beats at 120 BPM = 8 * (60/120) seconds = 4 seconds = 192000 samples
     int defaultSize = sampleRate * 4;  // 4 seconds
-    if (freezeBuffer_->getSize() == 0)
-        freezeBuffer_->allocate(defaultSize);
-    
-    freezeBuffer_->setSampleRate(sampleRate);
+    if (freezeBuffer_.getSize() == 0)
+        freezeBuffer_.allocate(defaultSize);
 }
 
 void FreezeEffect::setBufferSizeInSamples(int size)
 {
-    freezeBuffer_->allocate(size);
+    freezeBuffer_.allocate(size);
 }
 
 void FreezeEffect::setFrozen(bool b)
 {
     if (b)
-        freezeBuffer_->freeze();
+        freezeBuffer_.freeze();
     else
-        freezeBuffer_->unfreeze();
+        freezeBuffer_.unfreeze();
 }
 
 void FreezeEffect::processBlock(const float* inputAudio, float* outputAudio, int numSamples,
                                 double tempoInBPM)
 {
-    if (!outputAudio || numSamples <= 0)
+    if (!outputAudio || numSamples <= 0 || numSamples > 4096)
         return;
     
     float wetMix = dryWetMix_.load();
@@ -44,7 +42,7 @@ void FreezeEffect::processBlock(const float* inputAudio, float* outputAudio, int
     if (!isFrozen())
     {
         // Recording mode: push input to buffer and output dry signal
-        freezeBuffer_->pushBlock(inputAudio, numSamples);
+        freezeBuffer_.pushBlock(inputAudio, numSamples);
         if (inputAudio)
             std::memcpy(outputAudio, inputAudio, numSamples * sizeof(float));
         else
@@ -56,7 +54,7 @@ void FreezeEffect::processBlock(const float* inputAudio, float* outputAudio, int
         updateStutterPlayback(tempoInBPM, numSamples);
         
         float frozenAudio[4096];
-        freezeBuffer_->pullBlock(frozenAudio, numSamples);
+        freezeBuffer_.pullBlock(frozenAudio, numSamples);
         
         // Crossfade between dry and frozen
         if (inputAudio)
@@ -78,10 +76,10 @@ void FreezeEffect::setDryWetMix(float wet)
 
 float FreezeEffect::getBufferFillPercentage() const
 {
-    if (freezeBuffer_->getSize() <= 0)
+    if (freezeBuffer_.getSize() <= 0)
         return 0.0f;
     
-    return freezeBuffer_->getReadPosition() * 100.0f;
+    return freezeBuffer_.getReadPosition() * 100.0f;
 }
 
 void FreezeEffect::updateStutterPlayback(double tempoInBPM, int blockSize)
@@ -94,7 +92,7 @@ void FreezeEffect::updateStutterPlayback(double tempoInBPM, int blockSize)
     stutterAccumulator_ += blockSize;
     if (stutterAccumulator_ >= stutterSamples)
     {
-        freezeBuffer_->jumpReadPointerByFraction(stutterFraction_);
-        stutterAccumulator_ = 0.0;
+        freezeBuffer_.jumpReadPointerByFraction(stutterFraction_);
+        stutterAccumulator_ -= stutterSamples;
     }
 }

@@ -12,14 +12,12 @@ void AudioBuffer::allocate(int numChannels, int numFrames)
     
     data_.resize(numChannels * numFrames, 0.0f);
     
-    // Set up pointers
+    // Set up channel pointers into the flat data array
     writePointers_.clear();
-    readPointers_.clear();
     
     for (int ch = 0; ch < numChannels; ++ch)
     {
         writePointers_.push_back(data_.data() + ch * numFrames);
-        readPointers_.push_back(data_.data() + ch * numFrames);
     }
 }
 
@@ -37,9 +35,9 @@ float* AudioBuffer::getWritePointer(int channel)
 
 const float* AudioBuffer::getReadPointer(int channel) const
 {
-    if (channel < 0 || channel >= numChannels_ || readPointers_.empty())
+    if (channel < 0 || channel >= numChannels_ || writePointers_.empty())
         return nullptr;
-    return readPointers_[channel];
+    return writePointers_[channel];
 }
 
 float** AudioBuffer::getArrayOfWritePointers()
@@ -49,5 +47,5 @@ float** AudioBuffer::getArrayOfWritePointers()
 
 const float* const* AudioBuffer::getArrayOfReadPointers() const
 {
-    return const_cast<const float* const*>(readPointers_.data());
+    return const_cast<const float* const*>(writePointers_.data());
 }

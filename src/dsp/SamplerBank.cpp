@@ -44,14 +44,14 @@ void SamplerBank::stopAll()
 
 void SamplerBank::processBlock(float* outAudio, int numSamples, double tempoInBPM, float mixLevel)
 {
-    if (!outAudio)
+    if (!outAudio || numSamples > 4096)
         return;
     
     // Clear output
     std::fill(outAudio, outAudio + numSamples, 0.0f);
     
     // Mix all 4 samplers
-    float tempBuffer[4096];  // Temp buffer for each sampler
+    float tempBuffer[4096];
     for (auto& sampler : samplers_)
     {
         if (sampler.hasSampleData() && sampler.isPlaying())
