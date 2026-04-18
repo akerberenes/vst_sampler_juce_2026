@@ -1,0 +1,40 @@
+# Build artifacts
+build/
+CMakeFiles/
+*.o
+*.a
+*.so
+*.lib
+*.dll
+*.exe
+*.dylib
+*.app
+
+# IDE files
+.vscode/
+.idea/
+*.xcodeproj/
+*.pro
+
+# CMake
+CMakeCache.txt
+cmake_install.cmake
+Makefile
+
+# Compiled plugin
+*.vst3
+*.au
+*.vst
+
+# OS files
+.DS_Store
+Thumbs.db
+*.swp
+*~
+
+# JUCE
+JuceLibraryCode/
+*.jucer_
+
+# Test executables
+DSPTests
