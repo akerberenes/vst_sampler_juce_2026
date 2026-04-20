@@ -1,203 +1,136 @@
-# Conversation Summary - Copilot Session
+# Conversation Summary - Copilot Sessions
 
-## Date
-April 18, 2026
+## Last Updated
+April 20, 2026 (Session 3)
 
-## Main Topics Discussed
+---
 
-### 1. Project Feasibility & Technology Stack Decision
-**Question:** Can I develop VST plugins using existing libraries or should I build a standalone DSP app? What language?
+## Session 1 — April 18, 2026: Project Foundation
 
-**Decision:**
-- **JUCE** (C++) is the ideal choice
-- Single codebase generates VST3, AU, and standalone simultaneously
-- Better than starting with Pure Data/Max/SuperCollider because those don't compile to plugins cleanly
-- C++ provides real-time guarantees needed for reliable sampler playback
+### Topics & Decisions
+- **Technology stack**: JUCE (C++) chosen for VST3/AU/Standalone generation
+- **Architecture**: 4-tier modular design (AudioBuffer → DSP blocks → FreezeEffect → JUCE wrapper)
+- **Teensy portability**: `src/dsp/` pure C++17 with zero JUCE deps; `src/juce/` JUCE-only
+- **Freeze effect**: Acts on master output, two routing modes (Sequential/Parallel)
+- **Unit testing**: Catch2, purely numeric validation (no audio playback)
+- **Git**: Initialized locally, user prefers manual pushes only
 
-### 2. Freeze Effect Architecture (Critical Design)
-**Question:** How should the echo freeze work? What gets captured?
-
-**Design Rationale:**
-- Freeze acts on the **master output**, not just input
-- Two routing modes:
-  - **Sequential:** Input + samplers mixed together → captured by freeze
-  - **Parallel:** Input isolated, only samplers → captured by freeze
-- This flexibility allows users to freeze just the sampler or both
-
-### 3. Modular Architecture for Code Reuse
-**Question:** How can I make this Teensy-portable later?
-
-**Solution:**
-- **Tier separation:** DSP core (src/dsp/) has ZERO JUCE dependencies
-- Pure C++ modules are independently compilable for Teensy
-- Only PluginProcessor/Editor depend on JUCE
-- Real-time safe patterns (atomics, no locks) work on both platforms
-
-### 4. Complete System Architecture Explained
-**Deep dive into:**
-- Why modules are ordered as they are (dependency hierarchy)
-- How each module connects to the next
-- Why CircularBuffer is independent from Sampler (different jobs)
-- Why Mixer abstracts mode switching (clean separation)
-- Why FreezeEffect wraps CircularBuffer (state machine layer)
-
-### 5. Unit Testing Approach
-**Question:** How do unit tests work? Do they involve hearing sound?
-
-**Answer:**
-- NO audio playback — purely numeric validation
-- Test if math is correct: does 0.3 + 0.7 = 1.0?
-- Test if state transitions work: is freeze enabled after calling `freeze()`?
-- Test timing accuracy: does 4 beats at 120 BPM = exactly 96,000 samples?
-- Unit tests ≠ listening tests (those happen in Reaper with your ears)
-
-### 6. Testing Strategy
-- Unit tests for DSP modules (math validation)
-- Integration tests (do modules work together?)
-- DAW testing in Reaper (listening/performance)
-- Performance profiling (CPU usage <5%)
-
-### 7. VST Development Workflow
-**Testing steps to get plugin into Reaper:**
-1. Install JUCE framework
-2. Build with CMake
-3. Copy .vst3 to Reaper plugins folder
-4. Load in DAW, trigger with MIDI keyboard
-
-### 8. JUCE's Role in Testing
-- Handles AudioProcessor template (real-time threading model)
-- Parameter state management
-- MIDI routing from host
-- Multiple format generation (VST3, AU, Standalone)
-- GUI framework for waveform display
-
-### 9. VSCode Integration
-- Copilot Chat works better in VSCode (direct workspace access)
-- Can use `@filename` to reference code in chat
-- Can use `@workspace` for architecture questions
-- This web chat and VSCode chat are separate contexts
-
-### 10. Git Setup & GitHub
-- Configured local git with user identity
-- Instructions for linking to GitHub (not yet executed)
-- User requested no automatic pushes to GitHub
-
-### 11. Git Cleanup
-- Removed accidentally created .git folder in parent directory
-- Kept .git only in project folder
-
-## Architecture Walkthrough Provided
-
-**5-tier structure explained:**
-
-```
-Tier 1: AudioBuffer (foundation utility)
-Tier 2: CircularBuffer, Sampler, Mixer, SamplerBank (DSP blocks)
-Tier 3: FreezeEffect (orchestration)
-Tier 4: PluginProcessor, PluginEditor (JUCE integration)
-```
-
-Each tier explained with:
-- Purpose (why it exists)
-- Key functions (what it does)
-- Connections (how it talks to other modules)
-- Design decisions (why implemented this way)
-
-## Key Decisions Made
-
-1. **One-shot playback only** (no polyphony per sample for simplicity)
-2. **Freeze buffer user-configurable** starting at 2-bar default
-3. **Sample loading via file browser + preset embedding** (portable presets)
-4. **Minimal MVP UI** (waveform display + buttons, no fancy graphics)
-5. **Support WAV, MP3, FLAC** via libsndfile, libmpg123, FLAC C API
-6. **DSP/JUCE separation** for Teensy reusability
-7. **Real-time safe patterns** (atomics, stack buffers, no locks in audio thread)
-
-## Project Status
-
-### ✓ Completed
-- Full project directory structure created
-- CMakeLists.txt configured
-- All 6 DSP modules written (CircularBuffer, Sampler, SamplerBank, Mixer, FreezeEffect, AudioBuffer)
+### Work Completed
+- Full project structure, CMakeLists.txt, all 6 DSP modules
 - JUCE integration scaffold (PluginProcessor, PluginEditor)
-- Audio file loader stub + Preset manager stub
-- Documentation (README.md, PORTING.md)
-- Git repository initialized locally
-- Session notes and conversation summary created
+- AudioFileLoader + PresetManager stubs
+- Documentation (README.md, PORTING.md, TEENSY_PERFORMANCE.md)
 
-### TODO (Next Phase)
-1. Install JUCE
-2. Build and verify compilation
-3. Write unit tests
-4. Test in Reaper
-5. Implement audio file loading
-6. Implement preset system
-7. Complete freeze effect UI controls
+---
 
-## Files Created in This Session
+## Session 2 — April 19, 2026: Effects, Menu, UI
 
+### Topics & Decisions
+- **Per-sample effects system**: Abstract `Effect` base → Distortion, BitCrush, SimpleFilter, NoEffect
+- **EffectLibrary**: Static factory with `createEffect(index)`, `NUM_EFFECTS=4`
+- **TeensyMenu**: 5-page LCD state machine (Sample 1–4, Preset page)
+  - Knob-driven navigation: pageKnob, paramKnob, paramValue
+  - Action button for preset save/reload
+- **TeensyEmulationPanel**: JUCE component emulating 2×16 LCD + 3 knobs + action button
+- **FreezeBufferDisplay**: Real-time waveform of the circular buffer
+- **Per-sample gain**: Independent volume per pad via APVTS parameters
+- **Obey Note Off**: Per-sample toggle for MIDI note-off behavior
+- **Preset system**: 3-way function (Save/Reload/LoadOther), 8 XML preset slots
+- **Window size**: Expanded to 750×800 to fit TeensyEmulationPanel (130px at bottom)
+
+### Work Completed
+- Full effects system with EffectLibrary
+- TeensyMenu.h/cpp (portable, no JUCE deps)
+- TeensyEmulationPanel.cpp (JUCE UI emulation)
+- FreezeBufferDisplay.cpp
+- Per-sample gain + Obey Note Off UI and DSP
+- WaveformDisplay interactive markers (green=start, red=end)
+- SampleTabPanel tabbed editor with all controls
+- Preset XML save/load in PluginProcessor
+- Unit tests expanded: 56 tests, 251 assertions
+
+---
+
+## Session 3 — April 20, 2026: Bug Fixes, Refactoring, Teensy Audit
+
+### Bug Fixes
+1. **Preset name not updating**: `loadPresetFromFile()` returned early when file didn't exist without calling `setPresetName()` → added name update + dirty clear in early return
+2. **Destination preset jumping to P5**: No pickup guard on destination knob when switching to LoadOther → added `destinationPickupPending_` flag
+3. **"P1" display format**: Changed `snprintf "%sP%d"` → `"%sPreset%d"` in `getZoneText()`
+4. **Obey Note Off checkbox hidden**: SampleTabPanel wfH formula didn't subtract the row height → fixed formula
+5. **Default presets**: Only create Preset1.xml + Preset2.xml on startup (not 8 defaults)
+6. **Test failures**: Fixed 4 tests for new preset name format and 3-band function values
+
+### Refactoring (Performance & Simplicity)
+- **Sampler.cpp**: Combined two silence guards into one; cached `totalFrames_` member (avoids `size()/channels_` division); `float` frac in interpolation (was double)
+- **Distortion.h**: Replaced `std::tanh()` with `fastTanh()` rational approximation — `x*(27+x²)/(27+9x²)` with ±3.0 clamp. ~22 cycles vs ~50-100 on ARM Cortex-M7
+- **PluginProcessor.cpp**: Replaced 4×4096 `float[]` stack arrays (64KB!) with member `std::vector<float>` buffers allocated once in `prepareToPlay()`. Cached per-sample param ID strings (`sampleParamIds_[4]`)
+- Dead code cleanup throughout
+
+### Teensy Portability Audit — No Blockers
+- All 13 files in `src/dsp/` are pure C++17, no JUCE includes
+- `std::string`/`std::function` only in TeensyMenu (UI thread, not audio path)
+- `std::vector` in Sampler/CircularBuffer/AudioBuffer — allocated in prepare(), not audio thread
+- Virtual dispatch for effects: ~6 cycles, acceptable
+- `std::fmod` in CircularBuffer: ~20-25 cycles, acceptable (could optimize with while-loop)
+
+### Teensy Performance Audit — 97%+ Headroom
+- Budget: 8,742 cycles/sample (48kHz, 600MHz @ 70%)
+- Per-effect costs: Distortion ~28, BitCrush ~31, SimpleFilter ~14, NoEffect ~0
+- Worst case (4× BitCrush + frozen): 247 cycles = 2.8% of budget
+- Stretch goals (not urgent): BitCrush `std::round` → int approx, CircularBuffer `fmod` → while-loop
+
+### Work Completed
+- All bug fixes applied and tested
+- Backup created (backup_1.zip)
+- Refactoring completed and verified (56 tests, 251 assertions passing)
+- VST3 deployed to `C:/JUCE/plugins/vst/`
+- Teensy portability + performance audit completed
+- Updated: TEENSY_PERFORMANCE.md, PORTING.md, repo memory, README.md
+
+---
+
+## Key Architecture Facts (For Future Sessions)
+
+### Build
 ```
-vst_plugin_project/
-├── CMakeLists.txt                      # Build configuration
-├── README.md                           # Project overview
-├── .gitignore                          # Git ignore rules
-├── src/
-│   ├── dsp/
-│   │   ├── AudioBuffer.h/cpp
-│   │   ├── CircularBuffer.h/cpp
-│   │   ├── Sampler.h/cpp
-│   │   ├── SamplerBank.h/cpp
-│   │   ├── Mixer.h/cpp
-│   │   └── FreezeEffect.h/cpp
-│   ├── juce/
-│   │   ├── PluginProcessor.h/cpp
-│   │   └── PluginEditor.h/cpp
-│   ├── audio/
-│   │   ├── AudioFileLoader.h/cpp
-│   │   └── PresetManager.h/cpp
-│   └── hardware/teensy/
-│       └── PLACEHOLDER.md
-├── docs/
-│   └── PORTING.md                      # Teensy port strategy
-└── copilot_context/
-    ├── SESSION_NOTES.md                # This file (to read in VSCode)
-    └── CONVERSATION_SUMMARY.md         # Conversation history
+cmake --build C:\Users\anker\scripts\music_projects\vst_plugin_project\build --config Release
 ```
+- Test exe: `build/unit_tests/Release/DSPTests.exe`
+- VST3 copies to: `C:/JUCE/plugins/vst/`
+- JUCE at: `C:/JUCE`
 
-## Commands to Remember
+### File Layout
+- `src/dsp/` — Pure C++17 DSP (Teensy-portable). **Never add JUCE deps here.**
+- `src/dsp/effects/` — Effect base + 4 implementations + EffectLibrary
+- `src/juce/` — JUCE wrapper (PluginProcessor, PluginEditor, panels, displays)
+- `src/audio/` — AudioFileLoader, PresetManager (stubs)
+- `unit_tests/` — Catch2 v3.4.0 amalgamated, 56 tests
 
-### Build (once JUCE installed)
-```bash
-cd C:\Users\anker\scripts\music_projects\vst_plugin_project\build
-cmake .. -G "Visual Studio 17 2022" -A x64
-cmake --build . --config Release
-```
+### Key Design Patterns
+- **Pickup mode**: Prevents parameter jumps when switching knob functions (both effect params and preset destination)
+- **3-way preset function**: Save (zone 2) / Reload (zone 3) / LoadOther (zone 1 shows destination)
+- **Dirty tracking**: `valueTreePropertyChanged()` sets dirty flag, LCD shows `*` prefix
+- **Member buffers**: PluginProcessor uses `std::vector<float>` members instead of stack arrays
+- **fastTanh**: Rational approximation in Distortion — `x*(27+x²)/(27+9x²)`
 
-### Test in Reaper
-Copy `.vst3` to `C:\Program Files\REAPER\Plugins\VST3\`
+### User Preferences
+- Manual git pushes only (no auto-push)
+- Always consider Teensy portability/performance when modifying `src/dsp/`
+- Presets named "Preset1", "Preset2", etc. (not "P1", "Default", etc.)
+- Backup before major changes
 
-### Git Workflow
-```bash
-git config --global user.name "Your Name"
-git config --global user.email "your.email@example.com"
-git add .
-git commit -m "Message"
-# git push (when ready, manually)
-```
+### Current Status (April 20, 2026)
+- **56 tests, 251 assertions — all passing**
+- **VST3 builds and deploys successfully**
+- **No Teensy portability blockers**
+- **2.8% Teensy CPU utilization (97%+ headroom)**
 
-## Recommendations for Next Session
-
-1. **Start VSCode at project folder:**
-   ```bash
-   code C:\Users\anker\scripts\music_projects\vst_plugin_project
-   ```
-
-2. **Reference SESSION_NOTES.md in Copilot Chat:**
-   ```
-   @SESSION_NOTES.md remind me of the architecture
-   ```
-
-3. **Install JUCE before building**
+### What's Next
+- DAW testing in Reaper (listening tests)
+- Audio file format support (WAV/MP3/FLAC via JUCE AudioFormatManager)
+- Potential: more effects, higher-order filters, additional stutter subdivisions
+- Eventual: Teensy hardware port (Phases A–E in docs/PORTING.md)
 
 4. **Build, then run unit tests before DAW testing**
 

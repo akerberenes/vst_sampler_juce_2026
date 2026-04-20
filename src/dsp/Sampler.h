@@ -3,6 +3,8 @@
 #include <vector>
 #include <atomic>
 
+class Effect;
+
 /**
  * Sampler
  *
@@ -81,12 +83,15 @@ public:
     // --- Per-pad output volume ---
 
     // Set the output gain multiplier applied to every sample this pad produces.
-    // 0.0 = silence, 1.0 = unity gain (default), 2.0 = 6 dB boost (~double amplitude).
-    // Values are clamped to [0.0, 2.0] to prevent accidental extreme amplification.
-    // The gain is applied BEFORE SamplerBank's 0.25 attenuation stage, so the
-    // effective range reaching the mix bus is [0.0, 0.5] per pad.
     void setGain(float gain);
     float getGain() const { return gain_.load(); }
+
+    // --- Per-pad effect ---
+
+    // Set the effect applied to this pad's output (called from TeensyMenu).
+    // The Sampler does NOT own the Effect; the caller manages its lifetime.
+    void setEffect(Effect* effect) { effect_ = effect; }
+    Effect* getEffect() const { return effect_; }
 
     // --- Playback region ---
 
@@ -146,6 +151,9 @@ private:
     // Number of interleaved channels in sampleData_.
     int channels_ = 1;
 
+    // Total number of frames (sampleData_.size() / channels_). Updated on load/clear.
+    int totalFrames_ = 0;
+
     // Whether audio is currently playing. Atomic for UI-thread read safety.
     std::atomic<bool> isPlaying_{false};
 
@@ -167,6 +175,9 @@ private:
     // Output volume multiplier. Atomic so the UI thread can write it safely
     // while the audio thread reads it inside processBlock().
     std::atomic<float> gain_{1.0f};
+
+    // Per-pad effect (non-owning pointer). nullptr = no effect / bypass.
+    Effect* effect_ = nullptr;
 
     // Convert startFraction_ to an absolute integer sample index in sampleData_.
     int getStartInSamples() const;

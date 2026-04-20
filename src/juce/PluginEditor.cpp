@@ -8,10 +8,11 @@ PluginEditor::PluginEditor(PluginProcessor& processor)
       // SampleTabPanel is constructed here (before the body of the constructor),
       // so it receives a valid processor reference from the start.
       sampleTabPanel_(processor),
-      freezeBufferDisplay_(processor)
+      freezeBufferDisplay_(processor),
+      teensyPanel_(processor.getAPVTS(), processor.getTeensyMenu())
 {
-    // Set the fixed window size. Users can't resize this window.
-    setSize(750, 550);
+    // Set the fixed window size (expanded to fit the Teensy UI emulation panel above).
+    setSize(750, 800);
 
     // --- Title label ---
     addAndMakeVisible(titleLabel_);
@@ -22,6 +23,9 @@ PluginEditor::PluginEditor(PluginProcessor& processor)
     // --- Sample tab panel (left column) ---
     // Contains all per-pad UI: waveform, markers, load button, obey-note-off toggle.
     addAndMakeVisible(sampleTabPanel_);
+
+    // --- Teensy UI emulation panel (above main section) ---
+    addAndMakeVisible(teensyPanel_);
 
     // --- Freeze buffer waveform display ---
     addAndMakeVisible(freezeBufferDisplay_);
@@ -145,49 +149,56 @@ void PluginEditor::paint(juce::Graphics& g)
     // Fill the whole window with a dark background colour.
     g.fillAll(juce::Colour(0xff2a2a2a));
 
-    int titleH = 40;   // Height of the title bar.
-    int padsH  = 50;   // Height of the pad buttons section at the very bottom.
-    int mixerH = 90;   // Height of the mixer strip.
-    int mainH  = getHeight() - titleH - mixerH - padsH;  // Height of the main middle section.
-    int leftW  = 400;  // Width of the SampleTabPanel column.
+    int titleH   = 40;   // Height of the title bar.
+    int teensyH  = 130;  // Height of the Teensy UI emulation panel.
+    int padsH    = 50;   // Height of the pad buttons section at the very bottom.
+    int mixerH   = 90;   // Height of the mixer strip.
+    int mainH    = getHeight() - titleH - teensyH - mixerH - padsH;  // Main middle section.
+    int mainTop  = titleH + teensyH;  // Y where the main section starts.
+    int leftW    = 400;  // Width of the SampleTabPanel column.
 
     // --- Section divider lines ---
     g.setColour(juce::Colour(0xff444444));
-    g.drawLine(0,      (float)titleH,          (float)getWidth(), (float)titleH);           // Below title.
-    g.drawLine((float)leftW, (float)titleH,    (float)leftW,      (float)(titleH + mainH)); // Between panels.
-    g.drawLine(0,      (float)(titleH + mainH),(float)getWidth(), (float)(titleH + mainH)); // Above mixer.
-    g.drawLine(0,      (float)(titleH + mainH + mixerH), (float)getWidth(), (float)(titleH + mainH + mixerH)); // Above pads.
+    g.drawLine(0, (float)titleH, (float)getWidth(), (float)titleH);                        // Below title.
+    g.drawLine(0, (float)mainTop, (float)getWidth(), (float)mainTop);                      // Below teensy panel.
+    g.drawLine((float)leftW, (float)mainTop, (float)leftW, (float)(mainTop + mainH));      // Between panels.
+    g.drawLine(0, (float)(mainTop + mainH), (float)getWidth(), (float)(mainTop + mainH));  // Above mixer.
+    g.drawLine(0, (float)(mainTop + mainH + mixerH), (float)getWidth(), (float)(mainTop + mainH + mixerH)); // Above pads.
 
-    // --- Section header labels (painted directly, not as JUCE Label components) ---
+    // --- Section header labels ---
     g.setColour(juce::Colours::grey);
     g.setFont(12.0f);
-    g.drawText("FREEZE EFFECT", leftW + 10, titleH + 4, 200, 16, juce::Justification::centredLeft);
-    g.drawText("MIXER",         10,          titleH + mainH + 4, 200, 16, juce::Justification::centredLeft);
-    g.drawText("PADS",          10,          titleH + mainH + mixerH + 4, 200, 16, juce::Justification::centredLeft);
+    g.drawText("FREEZE EFFECT", leftW + 10, mainTop + 4, 200, 16, juce::Justification::centredLeft);
+    g.drawText("MIXER",         10,          mainTop + mainH + 4, 200, 16, juce::Justification::centredLeft);
+    g.drawText("PADS",          10,          mainTop + mainH + mixerH + 4, 200, 16, juce::Justification::centredLeft);
 }
 
 void PluginEditor::resized()
 {
     // All measurements match the layout diagram in the class comment.
-    int titleH = 40;
-    int padsH  = 50;
-    int mixerH = 90;
-    int mainH  = getHeight() - titleH - mixerH - padsH;
-    int leftW  = 400;
-    int pad    = 10;
-    int rowH   = 28;
+    int titleH   = 40;
+    int teensyH  = 130;
+    int padsH    = 50;
+    int mixerH   = 90;
+    int mainH    = getHeight() - titleH - teensyH - mixerH - padsH;
+    int mainTop  = titleH + teensyH;
+    int leftW    = 400;
+    int pad      = 10;
+    int rowH     = 28;
 
     // --- Title ---
     titleLabel_.setBounds(0, 0, getWidth(), titleH);
 
+    // --- Teensy UI emulation panel (between title and main section) ---
+    teensyPanel_.setBounds(0, titleH, getWidth(), teensyH);
+
     // --- Sample tab panel (left column, full height of main section) ---
-    sampleTabPanel_.setBounds(0, titleH, leftW, mainH);
+    sampleTabPanel_.setBounds(0, mainTop, leftW, mainH);
 
     // --- Freeze controls (right column) ---
-    // fx/fy: origin of the right-column content.
     int fx     = leftW + pad;
-    int fw     = getWidth() - leftW - pad * 2;  // Total right column width.
-    int fy     = titleH + 24;  // A bit below the "FREEZE EFFECT" header text.
+    int fw     = getWidth() - leftW - pad * 2;
+    int fy     = mainTop + 24;
 
     freezeButton_.setBounds(fx, fy, fw, rowH);
     fy += rowH + 8;
@@ -218,13 +229,13 @@ void PluginEditor::resized()
 
     // --- Freeze buffer waveform display ---
     // Occupies the remaining space in the right column below the loop sliders.
-    int displayH = (titleH + mainH) - fy - pad;
+    int displayH = (mainTop + mainH) - fy - pad;
     if (displayH > 0)
         freezeBufferDisplay_.setBounds(fx, fy, fw, displayH);
 
     // --- Mixer strip (bottom) ---
     // The mixer is positioned below the main section.
-    int my    = titleH + mainH + 22;  // A bit below the "MIXER" header text.
+    int my    = mainTop + mainH + 22;  // A bit below the "MIXER" header text.
     int halfW = (getWidth() - pad * 3) / 2;  // Each mixer control pair gets half the width.
 
     parallelModeButton_.setBounds(pad, my, 150, rowH);
@@ -237,7 +248,7 @@ void PluginEditor::resized()
     samplerLevelSlider_.setBounds(pad * 2 + halfW + 95, my, halfW - 95, rowH);
 
     // --- Pad buttons (bottom row) ---
-    int padY    = titleH + mainH + mixerH + 18;  // Below the "PADS" header text.
+    int padY    = mainTop + mainH + mixerH + 18;  // Below the "PADS" header text.
     int padBtnH = padsH - 24;                     // Button height (leave room for header).
     int totalPadW = getWidth() - pad * 2;         // Available width for all 4 pads.
     int padGap  = 8;                               // Gap between buttons.

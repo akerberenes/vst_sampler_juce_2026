@@ -16,6 +16,7 @@ add_library(SamplerDSP STATIC
     src/dsp/Mixer.cpp
     src/dsp/FreezeEffect.cpp
     src/dsp/AudioBuffer.cpp
+    src/dsp/TeensyMenu.cpp
 )
 target_include_directories(SamplerDSP PUBLIC src/dsp)
 target_compile_features(SamplerDSP PRIVATE cxx_std_17)
@@ -50,6 +51,7 @@ target_sources(SamplerWithFreeze PRIVATE
     src/juce/WaveformDisplay.cpp
     src/juce/SampleTabPanel.cpp
     src/juce/FreezeBufferDisplay.cpp
+    src/juce/TeensyEmulationPanel.cpp
 )
 
 target_compile_features(SamplerWithFreeze PRIVATE cxx_std_17)

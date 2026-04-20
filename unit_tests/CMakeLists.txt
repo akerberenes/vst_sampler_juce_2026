@@ -10,6 +10,7 @@ add_executable(DSPTests
     test_Mixer.cpp
     test_FreezeEffect.cpp
     test_Integration.cpp
+    test_TeensyMenu.cpp
     catch2/catch_amalgamated.cpp
 )
 

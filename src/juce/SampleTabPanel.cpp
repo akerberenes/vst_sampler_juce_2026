@@ -220,7 +220,7 @@ void SampleTabPanel::resized()
     int labelH = 14;
     int knobSz = 70;  // Square bounds for each rotary (arc + text box inside).
     int knobRowH = labelH + knobSz;
-    int wfH = ch - knobRowH - rowH - pad * 4;
+    int wfH = ch - knobRowH - rowH * 2 - pad * 4;
     tabs_[i].waveform.setBounds(pad, cy, cw, wfH);
     cy += wfH + pad;
 

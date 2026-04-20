@@ -5,6 +5,7 @@
 #include "SamplerBank.h"
 #include "Mixer.h"
 #include "FreezeEffect.h"
+#include "TeensyMenu.h"
 
 /**
  * PluginProcessor
@@ -44,7 +45,8 @@
  * - APVTS parameters are updated by the UI thread and read by the audio thread
  *   via atomic<float>* -- this is safe by design.
  */
-class PluginProcessor : public juce::AudioProcessor
+class PluginProcessor : public juce::AudioProcessor,
+                       private juce::ValueTree::Listener
 {
 public:
     PluginProcessor();
@@ -132,6 +134,9 @@ public:
     // Same behaviour as a MIDI note-off.
     void stopPad(int index);
 
+    // Access the TeensyMenu for the UI emulation panel.
+    TeensyMenu& getTeensyMenu() { return teensyMenu_; }
+
 private:
     // --- DSP pipeline ---
 
@@ -143,6 +148,9 @@ private:
 
     // Echo-freeze effect (ring buffer + stutter + speed + dry/wet).
     FreezeEffect freezeEffect_;
+
+    // Teensy UI menu state machine (owns per-sample effects).
+    TeensyMenu teensyMenu_;
 
     // --- Parameter management ---
 
@@ -169,6 +177,29 @@ private:
     // Per-pad waveform data (copy of channel 0) for the WaveformDisplay UI component.
     // Populated on load; read by the UI on the main thread.
     std::vector<float> sampleWaveforms_[4];
+
+    // Pre-allocated audio processing buffers (sized in prepareToPlay).
+    std::vector<float> inputCopy_;
+    std::vector<float> samplerOutput_;
+    std::vector<float> mixedOutput_;
+    std::vector<float> freezeOutput_;
+
+    // Cached per-sample APVTS parameter IDs (built once in constructor).
+    struct SampleParamIds {
+        juce::String loopPos, loopLen, gain;
+    };
+    SampleParamIds sampleParamIds_[4];
+
+    // --- File-based preset system ---
+    juce::File presetDir_;
+    void savePresetToFile(const std::string& presetName);
+    void loadPresetFromFile(const std::string& presetName);
+
+    // --- ValueTree::Listener (marks TeensyMenu dirty on any APVTS change) ---
+    void valueTreePropertyChanged(juce::ValueTree&, const juce::Identifier&) override
+    {
+        teensyMenu_.setDirty(true);
+    }
 
     // --- MIDI mapping constants ---
 

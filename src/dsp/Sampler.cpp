@@ -1,4 +1,5 @@
 #include "Sampler.h"
+#include "effects/Effect.h"
 #include <algorithm>
 #include <cmath>
 
@@ -17,11 +18,13 @@ void Sampler::setSampleData(const float* audioData, int lengthInSamples, int cha
     // E.g. 1000-frame stereo sample → 2000 floats.
     sampleData_.assign(audioData, audioData + (lengthInSamples * channels));
     channels_ = channels;
+    totalFrames_ = lengthInSamples;
 }
 
 void Sampler::clearSampleData()
 {
     sampleData_.clear();
+    totalFrames_ = 0;
     isPlaying_.store(false);
 }
 
@@ -63,15 +66,10 @@ void Sampler::trigger(double beatDuration, double tempoInBPM)
 
 void Sampler::processBlock(float* outAudio, int numSamples, double tempoInBPM)
 {
-    if (!outAudio || !hasSampleData())
+    if (!outAudio || !hasSampleData() || !isPlaying_.load())
     {
-        std::fill(outAudio, outAudio + numSamples, 0.0f);
-        return;
-    }
-
-    if (!isPlaying_.load())
-    {
-        std::fill(outAudio, outAudio + numSamples, 0.0f);
+        if (outAudio)
+            std::fill(outAudio, outAudio + numSamples, 0.0f);
         return;
     }
 
@@ -103,7 +101,11 @@ void Sampler::processBlock(float* outAudio, int numSamples, double tempoInBPM)
 
         // Write the interpolated sample at the current fractional playhead position,
         // scaled by the per-pad gain (set via setGain(), default 1.0 = unity).
-        outAudio[i] = interpolateSample(pos) * gain;
+        float sample = interpolateSample(pos) * gain;
+        // Apply per-pad effect if one is assigned.
+        if (effect_)
+            sample = effect_->processSample(sample);
+        outAudio[i] = sample;
 
         // Advance playhead by one sample (normal 1× speed).
         pos += 1.0;
@@ -156,54 +158,38 @@ float Sampler::getPlaybackPosition() const
 
 float Sampler::getSampleDurationInSeconds() const
 {
-    if (channels_ <= 0 || sampleRate_ <= 0)
+    if (totalFrames_ <= 0 || sampleRate_ <= 0)
         return 0.0f;
-    // sampleData_.size() = frames × channels; divide by channels to get frame count.
-    return static_cast<float>(sampleData_.size()) / (channels_ * sampleRate_);
+    return static_cast<float>(totalFrames_) / sampleRate_;
 }
 
 int Sampler::getStartInSamples() const
 {
-    if (channels_ <= 0)
+    if (totalFrames_ <= 0)
         return 0;
-    // Number of audio frames = total floats ÷ channels.
-    int totalSamples = sampleData_.size() / channels_;
-    return static_cast<int>(totalSamples * startFraction_);
+    return static_cast<int>(totalFrames_ * startFraction_);
 }
 
 int Sampler::getEndInSamples() const
 {
-    if (channels_ <= 0)
+    if (totalFrames_ <= 0)
         return 0;
-    int totalSamples = sampleData_.size() / channels_;
-    return static_cast<int>(totalSamples * endFraction_);
+    return static_cast<int>(totalFrames_ * endFraction_);
 }
 
 float Sampler::interpolateSample(double position) const
 {
-    if (sampleData_.empty() || channels_ <= 0)
+    if (totalFrames_ <= 0)
         return 0.0f;
 
-    int totalSamples = sampleData_.size() / channels_;
-    if (totalSamples <= 0)
-        return 0.0f;
-
-    // Split the fractional position into integer index and fractional remainder.
-    // Example: position=1234.7 → idx=1234, frac=0.7
     int    idx  = static_cast<int>(position);
-    double frac = position - static_cast<double>(idx);  // 0.0 ≤ frac < 1.0
+    float  frac = static_cast<float>(position - idx);
 
-    if (idx < 0 || idx >= totalSamples)
+    if (idx < 0 || idx >= totalFrames_)
         return 0.0f;
 
-    // Read channel 0 at idx and the next frame (clamped to 0.0 at end-of-buffer).
-    // The `* channels_` skips over interleaved channel data to stay on channel 0.
     float sample1 = sampleData_[idx * channels_];
-    float sample2 = (idx + 1 < totalSamples) ? sampleData_[(idx + 1) * channels_] : 0.0f;
+    float sample2 = (idx + 1 < totalFrames_) ? sampleData_[(idx + 1) * channels_] : 0.0f;
 
-    // Linear interpolation formula: blend from sample1 to sample2 by frac.
-    // frac=0.0 → returns sample1 exactly
-    // frac=0.5 → returns the midpoint
-    // frac=1.0 → returns sample2 exactly
-    return sample1 + static_cast<float>(frac) * (sample2 - sample1);
+    return sample1 + frac * (sample2 - sample1);
 }

@@ -1,37 +1,61 @@
 # Session Notes - VST Plugin Development
 
+## Last Updated: April 20, 2026
+
 ## Project Overview
-Building a JUCE-based VST3/AU plugin (with Teensy hardware portability) featuring:
-- 4-sample one-shot MIDI-triggered sampler
+JUCE-based VST3/Standalone sampler plugin with echo-freeze effect, designed for Teensy 4.1 portability.
+- 4-sample one-shot MIDI-triggered sampler with per-pad gain and effects
 - Tempo-synced loop playback with fractional bar support
 - Master echo-freeze effect with stutter/speed/loop manipulation
 - Parallel/Sequential routing modes
-- Preset system with embedded samples
+- 5-page LCD menu system (TeensyMenu) with hardware-portable state machine
+- XML preset system (8 slots, Save/Reload/LoadOther)
 
 ## Architecture Layers
 
 ### Tier 1: Foundation
 - **AudioBuffer** — Generic multi-channel audio buffer for inter-module communication
 
-### Tier 2: DSP Building Blocks (Pure C++, no JUCE)
-- **CircularBuffer** — Ring buffer for freeze effect (write pointer, read pointer with loop boundaries, speed control)
-- **Sampler** — Single sample playback with tempo sync (trigger by beat duration, linear interpolation, loop fractions)
+### Tier 2: DSP Building Blocks (Pure C++17, no JUCE)
+- **CircularBuffer** — Ring buffer for freeze effect (write/read pointers, speed control, loop boundaries)
+- **Sampler** — Single sample playback with tempo sync, cached totalFrames_, per-pad gain
 - **Mixer** — Routes audio based on parallel/sequential mode
 - **SamplerBank** — Container for 4 independent Sampler instances
 
+### Tier 2.5: Effects (Pure C++17, no JUCE)
+- **Effect** — Abstract base class (virtual processSample)
+- **NoEffect** — Passthrough (inlined)
+- **Distortion** — fastTanh rational approximation (~28 cycles/sample on ARM)
+- **BitCrush** — Sample quantisation (~31 cycles/sample)
+- **SimpleFilter** — One-pole low-pass IIR (~14 cycles/sample)
+- **EffectLibrary** — Static factory `createEffect(index)`, NUM_EFFECTS=4
+
 ### Tier 3: Orchestration
-- **FreezeEffect** — Coordinates freeze state machine (recording → frozen → manipulate), stutter quantization, dry/wet mixing
+- **FreezeEffect** — Freeze state machine (recording → frozen → manipulate), stutter quantization (1/32 + 1/64), dry/wet
+- **TeensyMenu** — 5-page LCD menu state machine (Sample 1–4, Preset)
+  - 3 knob inputs (pageKnob, paramKnob, paramValue) + action button
+  - Per-sample effect selection via EffectLibrary
+  - 3-way preset function (Save/Reload/LoadOther) with destination pickup guard
+  - Dirty tracking with * indicator
+  - Pickup mode for smooth parameter transitions
 
 ### Tier 4: JUCE Integration
-- **PluginProcessor** — Main AudioProcessor (MIDI handling, host tempo query, audio chain coordination)
-- **PluginEditor** — Minimal MVP UI (load buttons for samples)
+- **PluginProcessor** — AudioProcessor hub (MIDI, APVTS params, DSP chain, XML preset I/O)
+  - Member buffers (std::vector<float>) instead of stack arrays
+  - Cached param ID strings (sampleParamIds_[4])
+  - Creates Preset1.xml + Preset2.xml on first launch
+- **PluginEditor** — 750×800 window (SampleTabPanel + freeze controls + mixer + TeensyEmulationPanel)
+- **SampleTabPanel** — Tabbed per-sample editor (waveform, markers, gain, effect, obey note off)
+- **WaveformDisplay** — Interactive waveform with draggable green(start)/red(end) markers
+- **TeensyEmulationPanel** — LCD display + 3 knobs + action button (emulates hardware UI)
+- **FreezeBufferDisplay** — Real-time circular buffer waveform
 
 ## Signal Flow
 
 ```
 Audio Input (from DAW)
     ↓
-SamplerBank (4 samplers, each triggered by MIDI)
+SamplerBank (4 samplers, each with per-pad effect + gain)
     ↓
 Mixer (Sequential: blend input+samplers | Parallel: samplers only)
     ↓
@@ -40,138 +64,85 @@ FreezeEffect (record/freeze/playback with stutter, speed, loop control)
 Output (to DAW)
 ```
 
+## Build & Test
+
+### Build
+```bash
+cmake --build C:\Users\anker\scripts\music_projects\vst_plugin_project\build --config Release
+```
+
+### Test
+```bash
+.\build\unit_tests\Release\DSPTests.exe    # 56 tests, 251 assertions
+```
+
+### VST3 Output
+```
+build\SamplerWithFreeze_artefacts\Release\VST3\Sampler With Freeze.vst3
+→ Post-build copies to C:\JUCE\plugins\vst\
+```
+
+### Preset Files
+```
+%APPDATA%\SamplerWithFreeze\Presets\Preset1.xml through Preset8.xml
+```
+
 ## Key Design Decisions
 
 ### Real-Time Safety
 - **Atomics, not locks** — Audio callback uses `std::atomic` for parameter changes
-- **Stack buffers** — `float tempBuffer[4096]` allocated once per callback
+- **Member buffers** — `std::vector<float>` allocated once in prepareToPlay()
 - **No dynamic allocation** in audio thread (processBlock)
+- **Cached param IDs** — no string construction in audio thread
 
-### Freezing Mechanics
-- CircularBuffer uses two independent pointers: write (recording) and read (playback)
-- When frozen: stop writing new samples, read pointer loops the captured buffer
-- Loop boundaries (start/end fraction) allow extending/shortening the frozen loop
+### Teensy Portability
+- All DSP modules (`src/dsp/`) are pure C++17 with zero JUCE deps
+- Virtual dispatch for effects: ~6 cycles, acceptable
+- std::string/std::function only in TeensyMenu (UI thread)
+- **No portability blockers found** (audit April 20, 2026)
+- **2.8% CPU utilization** (97%+ headroom on Teensy 4.1 @ 600MHz)
 
-### Sampler Tempo Sync
-- `trigger(beatDuration, tempoInBPM)` calculates duration in samples
-- Example: 4 beats at 120 BPM = 2 seconds = 96,000 samples @ 48kHz
-- Loop fractions allow repeating at partial sample length
+### Effects System
+- Abstract base `Effect` with virtual `processSample(float)` and `setParameter(float)`
+- Each Sampler owns a raw `Effect*` pointer; TeensyMenu owns `unique_ptr<Effect>`
+- Effect is applied per-sample in Sampler::interpolateSample()
+- fastTanh in Distortion: `x*(27+x²)/(27+9x²)` with ±3.0 clamp
 
-### Routing Modes
-- **Sequential (default)** — Input mixed with sampler output, both captured by freeze
-- **Parallel** — Input isolated, only sampler output captured by freeze
-
-### Stutter Implementation
-- FreezeEffect accumulates time and jumps read pointer at rhythmic intervals
-- Stutter rate tied to host BPM for perfect quantization
+### Preset System
+- XML files at AppData/SamplerWithFreeze/Presets/
+- 3-way function: Save (writes current APVTS to XML), Reload (reloads current), LoadOther (browse + load)
+- Destination pickup guard: when switching to LoadOther, knob must "find" current position before changing
+- Dirty flag set via valueTreePropertyChanged(), displayed as * prefix on LCD
 
 ## Dependencies
-- **JUCE** (VST3, AU, Standalone generation)
-- **libsndfile** (WAV support)
-- **libmpg123** (MP3 support)
-- **FLAC C API** (FLAC support)
-- **C++17 compiler** (MSVC, Clang++, or GCC)
-
-## Build Steps
-
-### 1. Install JUCE
-```bash
-git clone https://github.com/juce-framework/JUCE.git C:\JUCE
-```
-
-### 2. Build Project
-```bash
-cd C:\Users\anker\scripts\music_projects\vst_plugin_project
-mkdir build
-cd build
-cmake .. -G "Visual Studio 17 2022" -A x64
-cmake --build . --config Release
-```
-
-### 3. Plugin Output
-```
-build/Release/SamplerWithFreeze_VST3/Release/SamplerWithFreeze.vst3
-```
-
-### 4. Install to Reaper
-```
-Copy .vst3 to C:\Program Files\REAPER\Plugins\VST3\
-```
-
-## Unit Testing Strategy
-
-All DSP modules are purely numeric (no audio listening):
-- **CircularBuffer tests:** Push/pull samples, freeze state, loop boundaries
-- **Sampler tests:** Tempo sync duration calculation, loop fractions
-- **Mixer tests:** Mode switching, input/sampler blending
-- **FreezeEffect tests:** Stutter timing accuracy, state transitions
-
-Test framework: Standalone executable or Catch2
+- **JUCE** (C:/JUCE) — VST3, Standalone generation, GUI
+- **Catch2 v3.4.0** (amalgamated, in unit_tests/catch2/) — Unit testing
+- **C++17 / CMake 3.24+ / Visual Studio 17 2022 x64**
 
 ## Development Roadmap
 
-### Phase 1: ✓ Complete
-- Project setup
-- CMakeLists.txt
-- DSP skeleton + implementations
-- JUCE integration scaffold
+### ✓ Phase 1: Core DSP (April 18)
+### ✓ Phase 2: JUCE Integration (April 19)
+### ✓ Phase 3: Effects & Menu System (April 19)
+### ✓ Phase 4: Preset System (April 19-20)
+### ✓ Phase 5: Refactoring & Optimization (April 20)
+### → Phase 6: Polish & Testing (In Progress)
+- DAW testing in Reaper
+- Audio file format polish
+- Potential: more effects, higher-order filters
 
-### Phase 2: TODO
-- Complete DSP implementations (verify logic)
-- Unit tests for all modules
-- Build and initial compilation
+### Teensy Port (Future)
+- Phase A: Compile gate (PlatformIO)
+- Phase B: DSP validation (Catch2 baseline)
+- Phase C: Control logic simulation (Wokwi)
+- Phase D: Sample loading (Wokwi + SD)
+- Phase E: Hardware audio (I2S + USB MIDI)
+- See docs/PORTING.md
 
-### Phase 3: TODO
-- JUCE parameter management
-- MIDI routing completion
-- Test in DAW (Reaper)
-
-### Phase 4: TODO
-- Audio file loading (WAV, MP3, FLAC)
-- Preset manager (save/load with embedded samples)
-- Waveform display UI
-
-### Phase 5: TODO
-- Echo freeze full stutter/speed/loop implementation
-- Integration testing
-
-### Phase 6: TODO
-- Teensy hardware adaptation (structure prep only)
-
-### Phase 7: TODO
-- Full testing, performance optimization, bug fixes
-
-## Important Notes
-
-### Real-Time Constraints
-- No file I/O in `processBlock()`
-- No memory allocation in audio thread
-- No blocking calls or locks
-- All state changes via atomics
-
-### Polyphony Limitation
-- One-shot playback only (each sample plays once per trigger)
-- No overlapping instances of the same sample
-
-### Freeze Buffer Sizing
-- Default: 2 bars at 120 BPM = 4 seconds
-- User-configurable up to 8 bars (~16 seconds)
-- Limited by available PSRAM on Teensy
-
-### Teensy Portability
-- All DSP modules (src/dsp/) are pure C++ with zero JUCE deps
-- Only JUCE-specific code: PluginProcessor, PluginEditor
-- See docs/PORTING.md for Teensy adaptation strategy
-
-## Current Project Status
-- **Git Repository:** Initialized locally (not pushed to GitHub yet)
-- **Compilation:** Not yet tested (JUCE required)
-- **DAW Testing:** Pending
-- **Platform:** Targeted for Windows (MSVC), macOS (Xcode), Linux (Ninja+Clang)
-
-## Next Immediate Tasks
-1. Install JUCE framework
-2. Configure CMakeLists.txt to find JUCE installation
-3. Build project and verify compilation
-4. Run unit tests to validate DSP logic
-5. Test plugin in Reaper
+## Important Notes for Future Sessions
+- **Always consider Teensy portability** when modifying `src/dsp/` — no JUCE deps, no heap in audio thread
+- **User prefers manual git pushes** — never auto-push
+- **Backup before major changes** — use backup.ps1
+- **Preset names**: "Preset1", "Preset2", etc. (not "P1" or "Default")
+- **Test after every change**: 56 tests must all pass before deploying
+- If Reaper has the .vst3 locked, close Reaper before rebuilding

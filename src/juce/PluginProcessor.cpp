@@ -17,21 +17,73 @@ PluginProcessor::PluginProcessor()
     // Register all built-in JUCE decoders (WAV, AIFF, MP3, FLAC, etc.).
     // Without this call, createReaderFor() would always return nullptr.
     formatManager_.registerBasicFormats();
+
+    // Connect the TeensyMenu to the SamplerBank so effect assignments reach the samplers.
+    teensyMenu_.setSamplerBank(&samplerBank_);
+
+    // Cache per-sample APVTS parameter ID strings (avoids rebuilding them every block).
+    for (int i = 0; i < 4; ++i)
+    {
+        auto si = juce::String(i);
+        sampleParamIds_[i].loopPos = "sampleLoopPos" + si;
+        sampleParamIds_[i].loopLen = "sampleLoopLen" + si;
+        sampleParamIds_[i].gain    = "sampleGain" + si;
+    }
+
+    // --- Preset file directory ---
+    // Presets are stored as XML in <appdata>/SamplerWithFreeze/Presets/
+    presetDir_ = juce::File::getSpecialLocation(
+                     juce::File::userApplicationDataDirectory)
+                     .getChildFile("SamplerWithFreeze")
+                     .getChildFile("Presets");
+    presetDir_.createDirectory();
+
+    // --- Preset save/reload/load callbacks ---
+    teensyMenu_.onSave = [this]
+    {
+        savePresetToFile(teensyMenu_.getPresetName());
+    };
+
+    teensyMenu_.onReload = [this]
+    {
+        loadPresetFromFile(teensyMenu_.getPresetName());
+    };
+
+    teensyMenu_.onLoadPreset = [this](int presetIndex)
+    {
+        juce::String name = "Preset" + juce::String(presetIndex + 1);
+        loadPresetFromFile(name.toStdString());
+    };
+
+    // Mark the TeensyMenu dirty whenever any APVTS parameter changes.
+    parameters_.state.addListener(this);
+
+    // Create default presets if they don't exist yet.
+    // Preset1 = initial state snapshot; Preset2 = a dummy alternative.
+    juce::File preset1 = presetDir_.getChildFile("Preset1.xml");
+    if (!preset1.existsAsFile())
+        savePresetToFile("Preset1");
+
+    juce::File preset2 = presetDir_.getChildFile("Preset2.xml");
+    if (!preset2.existsAsFile())
+        savePresetToFile("Preset2");
 }
 
 PluginProcessor::~PluginProcessor()
 {
-    // All members are RAII objects; no manual cleanup needed.
+    parameters_.state.removeListener(this);
 }
 
 void PluginProcessor::prepareToPlay(double sampleRate, int samplesPerBlock)
 {
-    // Called by the DAW once before audio processing begins.
-    // This is the correct place to allocate resources (ring buffers, etc.)
-    // and pass the sample rate to all DSP modules.
     samplerBank_.prepare(static_cast<int>(sampleRate), samplesPerBlock);
     freezeEffect_.prepare(static_cast<int>(sampleRate), samplesPerBlock);
-    // Mixer has no per-sample-rate resources to allocate.
+
+    // Pre-allocate audio processing buffers (avoids 16+ KB on the stack each block).
+    inputCopy_.resize(samplesPerBlock);
+    samplerOutput_.resize(samplesPerBlock);
+    mixedOutput_.resize(samplesPerBlock);
+    freezeOutput_.resize(samplesPerBlock);
 }
 
 void PluginProcessor::releaseResources()
@@ -77,8 +129,8 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     }
 
     int numSamples = buffer.getNumSamples();
-    // Guard: our stack-allocated temp buffers are sized 4096; bail if block is larger.
-    if (numSamples > 4096)
+    // Guard: buffer must fit our pre-allocated arrays.
+    if (numSamples > static_cast<int>(inputCopy_.size()))
         return;
 
     // --- Read APVTS parameters ---
@@ -108,57 +160,39 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     // Read them from APVTS and push to SamplerBank each block.
     for (int i = 0; i < 4; ++i)
     {
-        auto si = juce::String(i);
-        float loopPos = *parameters_.getRawParameterValue("sampleLoopPos" + si);
-        float loopLen = *parameters_.getRawParameterValue("sampleLoopLen" + si);
-        // Convert loop position + length to start/end fractions (clamped to [0, 1]).
+        float loopPos = *parameters_.getRawParameterValue(sampleParamIds_[i].loopPos);
+        float loopLen = *parameters_.getRawParameterValue(sampleParamIds_[i].loopLen);
         float ss = loopPos;
         float se = std::min(1.0f, loopPos + loopLen);
-        // Per-pad output volume (0.0–2.0). Read each block so the UI slider responds
-        // in real time without needing a separate listener.
-        float sg = *parameters_.getRawParameterValue("sampleGain" + si);
+        float sg = *parameters_.getRawParameterValue(sampleParamIds_[i].gain);
         samplerBank_.setSampleStartFraction(i, ss);
         samplerBank_.setSampleEndFraction(i, se);
         samplerBank_.setSampleGain(i, sg);
     }
 
     // --- Copy input BEFORE writing output ---
-    // IMPORTANT: buffer is used for BOTH input and output (JUCE convention for in-place
-    // processing). We must copy the input BEFORE we write any output to it, otherwise
-    // we'd mix the output back into what we read as "input".
-    float inputCopy[4096];
-    std::copy(buffer.getReadPointer(0), buffer.getReadPointer(0) + numSamples, inputCopy);
+    std::copy(buffer.getReadPointer(0), buffer.getReadPointer(0) + numSamples, inputCopy_.data());
 
     // --- Generate sampler audio ---
-    // All 4 pads are mixed and attenuated (each pad * 0.25) by SamplerBank::processBlock.
-    float samplerOutput[4096];
-    std::fill(samplerOutput, samplerOutput + numSamples, 0.0f);
-    samplerBank_.processBlock(samplerOutput, numSamples, getTempo());
+    std::fill(samplerOutput_.begin(), samplerOutput_.begin() + numSamples, 0.0f);
+    samplerBank_.processBlock(samplerOutput_.data(), numSamples, getTempo());
 
     // --- Route through Mixer ---
-    // Sequential: inputCopy + samplerOutput -> mixedOutput
-    // Parallel:   samplerOutput only          -> mixedOutput  (input bypasses Mixer)
-    float mixedOutput[4096];
-    mixer_.processBlock(inputCopy, samplerOutput, mixedOutput, numSamples);
+    mixer_.processBlock(inputCopy_.data(), samplerOutput_.data(), mixedOutput_.data(), numSamples);
 
     // --- Apply freeze effect ---
-    // FreezeEffect captures mixedOutput in recording mode, or replays it in frozen mode.
-    float freezeOutput[4096];
-    freezeEffect_.processBlock(mixedOutput, freezeOutput, numSamples, getTempo());
+    freezeEffect_.processBlock(mixedOutput_.data(), freezeOutput_.data(), numSamples, getTempo());
 
     // --- Write final output to DAW buffer ---
     float* outputChannel = buffer.getWritePointer(0);
     if (parallel)
     {
-        // In parallel mode the Mixer excluded the input from the freeze path.
-        // Add the dry input back here so the live signal is still audible.
         for (int i = 0; i < numSamples; ++i)
-            outputChannel[i] = freezeOutput[i] + inputCopy[i] * inputLevel;
+            outputChannel[i] = freezeOutput_[i] + inputCopy_[i] * inputLevel;
     }
     else
     {
-        // In sequential mode, freezeOutput already contains the fully mixed signal.
-        std::copy(freezeOutput, freezeOutput + numSamples, outputChannel);
+        std::copy(freezeOutput_.data(), freezeOutput_.data() + numSamples, outputChannel);
     }
 
     // --- Copy mono result to second channel for stereo output ---
@@ -199,6 +233,15 @@ void PluginProcessor::getStateInformation(juce::MemoryBlock& destData)
         }
     }
 
+    // Append TeensyMenu per-sample effect state.
+    for (int i = 0; i < 4; ++i)
+    {
+        auto* effectEl = xml->createNewChildElement("SampleEffect");
+        effectEl->setAttribute("index", i);
+        effectEl->setAttribute("effectIndex", teensyMenu_.getSelectedEffectIndex(i));
+        effectEl->setAttribute("paramValue", static_cast<double>(teensyMenu_.getEffectParamValue(i)));
+    }
+
     copyXmlToBinary(*xml, destData);
 }
 
@@ -223,6 +266,16 @@ void PluginProcessor::setStateInformation(const void* data, int sizeInBytes)
             if (file.existsAsFile())
                 loadSample(index, file);
         }
+    }
+
+    // Restore TeensyMenu per-sample effect state.
+    for (auto* child : xmlState->getChildWithTagNameIterator("SampleEffect"))
+    {
+        int index = child->getIntAttribute("index", -1);
+        int effectIndex = child->getIntAttribute("effectIndex", 0);
+        float paramValue = static_cast<float>(child->getDoubleAttribute("paramValue", 0.5));
+        if (index >= 0 && index < 4)
+            teensyMenu_.setEffectForSample(index, effectIndex, paramValue);
     }
 }
 
@@ -324,6 +377,8 @@ void PluginProcessor::loadSample(int index, const juce::File& file)
     // The UI reads this on the main thread; processBlock never reads sampleWaveforms_.
     const float* ch0 = tempBuffer.getReadPointer(0);
     sampleWaveforms_[index].assign(ch0, ch0 + numSamples);
+
+    teensyMenu_.setDirty(true);
 }
 
 juce::String PluginProcessor::getSampleName(int index) const
@@ -426,8 +481,106 @@ juce::AudioProcessorValueTreeState::ParameterLayout PluginProcessor::createParam
         juce::ParameterID{"samplerLevel", 1}, "Sampler Level",
         juce::NormalisableRange<float>(0.0f, 1.0f), 1.0f));
 
+    // --- Teensy UI emulation knobs ---
+    // These 3 parameters drive the TeensyMenu state machine.
+
+    // Page knob: 0.0–1.0 mapped to 5 pages (Sample1–4, Preset).
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{"teensyPage", 1}, "Teensy Page",
+        juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f));
+
+    // Param knob: 0.0–1.0 mapped to effect selection or save/reload.
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{"teensyParam", 1}, "Teensy Param",
+        juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f));
+
+    // Value knob: 0.0–1.0 sets the selected effect's parameter.
+    params.push_back(std::make_unique<juce::AudioParameterFloat>(
+        juce::ParameterID{"teensyValue", 1}, "Teensy Value",
+        juce::NormalisableRange<float>(0.0f, 1.0f), 0.5f));
+
     // ParameterLayout's constructor accepts a begin/end iterator pair.
     return { params.begin(), params.end() };
+}
+
+// ---------------------------------------------------------------------------
+// File-based preset save / load
+// ---------------------------------------------------------------------------
+void PluginProcessor::savePresetToFile(const std::string& presetName)
+{
+    // Build XML containing APVTS state, sample paths, and per-sample effects.
+    auto state = parameters_.copyState();
+    std::unique_ptr<juce::XmlElement> xml(state.createXml());
+
+    for (int i = 0; i < 4; ++i)
+    {
+        if (samplePaths_[i].isNotEmpty())
+        {
+            auto* el = xml->createNewChildElement("SamplePath");
+            el->setAttribute("index", i);
+            el->setAttribute("path", samplePaths_[i]);
+        }
+    }
+
+    for (int i = 0; i < 4; ++i)
+    {
+        auto* el = xml->createNewChildElement("SampleEffect");
+        el->setAttribute("index", i);
+        el->setAttribute("effectIndex", teensyMenu_.getSelectedEffectIndex(i));
+        el->setAttribute("paramValue",
+                         static_cast<double>(teensyMenu_.getEffectParamValue(i)));
+    }
+
+    juce::File file = presetDir_.getChildFile(juce::String(presetName) + ".xml");
+    xml->writeTo(file);
+}
+
+void PluginProcessor::loadPresetFromFile(const std::string& presetName)
+{
+    juce::File file = presetDir_.getChildFile(juce::String(presetName) + ".xml");
+    if (!file.existsAsFile())
+    {
+        // File doesn't exist yet — still update the name so the UI reflects it.
+        teensyMenu_.setPresetName(presetName);
+        teensyMenu_.setDirty(false);
+        return;
+    }
+
+    auto xml = juce::XmlDocument::parse(file);
+    if (xml == nullptr)
+        return;
+
+    // Restore APVTS.
+    if (xml->hasTagName(parameters_.state.getType()))
+        parameters_.replaceState(juce::ValueTree::fromXml(*xml));
+
+    // Restore sample files.
+    for (auto* child : xml->getChildWithTagNameIterator("SamplePath"))
+    {
+        int index = child->getIntAttribute("index", -1);
+        juce::String path = child->getStringAttribute("path");
+        if (index >= 0 && index < 4 && path.isNotEmpty())
+        {
+            juce::File f(path);
+            if (f.existsAsFile())
+                loadSample(index, f);
+        }
+    }
+
+    // Restore per-sample effects.
+    for (auto* child : xml->getChildWithTagNameIterator("SampleEffect"))
+    {
+        int index = child->getIntAttribute("index", -1);
+        int effectIndex = child->getIntAttribute("effectIndex", 0);
+        float paramValue = static_cast<float>(
+            child->getDoubleAttribute("paramValue", 0.5));
+        if (index >= 0 && index < 4)
+            teensyMenu_.setEffectForSample(index, effectIndex, paramValue);
+    }
+
+    // Update the menu's preset name and clear dirty flag.
+    teensyMenu_.setPresetName(presetName);
+    teensyMenu_.setDirty(false);
 }
 
 // --- JUCE plugin entry point ---

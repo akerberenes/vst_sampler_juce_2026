@@ -265,35 +265,48 @@ Here's how all the modules connect, from start to finish:
 - **4-Sample One-Shot Sampler** with tempo-synced looping and per-sample loop position/length editing
 - **Tabbed Waveform Editor** with draggable markers per sample
 - **MIDI Triggering** — C1, C2, C3, C4 mapped to samples 1–4, with per-sample Note Off control
-- **Echo Freeze Effect** on master output
+- **Per-Sample Effects** — Distortion (fastTanh), BitCrush, SimpleFilter, or bypass per pad
+- **Echo Freeze Effect** on master output with 1/32 + 1/64 stutter subdivisions
 - **Stutter Control** with rhythmic quantization (locked to BPM)
 - **Speed Manipulation** for pitch shifting frozen audio
 - **Dry/Wet Mix** with loop start/end boundary control
 - **Parallel/Sequential Routing** for flexible signal flow
-- **Preset System** with embedded sample storage (planned)
+- **Teensy-Portable Menu System** — 5-page LCD menu state machine (Sample 1–4, Preset)
+- **XML Preset System** — 8 preset slots with Save/Reload/LoadOther, dirty tracking, file-based storage
+- **Per-Sample Gain** — independent volume per pad
 
 ## Project Structure
 
 ```
 vst_plugin_project/
 ├── src/
-│   ├── dsp/              # Audio processing core (pure C++, no dependencies)
+│   ├── dsp/              # Audio processing core (pure C++17, no dependencies)
 │   │   ├── AudioBuffer       — multi-channel audio container
 │   │   ├── CircularBuffer    — recording tape loop for freeze
-│   │   ├── Sampler           — single sample playback with tempo sync
+│   │   ├── Sampler           — single sample playback with tempo sync + per-pad gain
 │   │   ├── SamplerBank       — 4 sampler instances mixed together
 │   │   ├── Mixer             — routing switch (sequential/parallel)
-│   │   └── FreezeEffect      — freeze/stutter/speed orchestrator
+│   │   ├── FreezeEffect      — freeze/stutter/speed orchestrator
+│   │   ├── TeensyMenu        — 5-page LCD menu state machine (portable)
+│   │   └── effects/          — per-sample insert effects
+│   │       ├── Effect.h          — abstract base class
+│   │       ├── NoEffect.h        — passthrough
+│   │       ├── Distortion.h      — fastTanh saturation (~28 cycles/sample)
+│   │       ├── BitCrush.h        — sample quantisation (~31 cycles/sample)
+│   │       ├── SimpleFilter.h    — one-pole low-pass (~14 cycles/sample)
+│   │       └── EffectLibrary.h   — static factory (4 effects)
 │   ├── juce/             # VST plugin wrapper (JUCE framework)
-│   │   ├── PluginProcessor   — connects DSP to the DAW
-│   │   ├── PluginEditor      — top-level GUI layout
+│   │   ├── PluginProcessor   — connects DSP to the DAW + XML preset I/O
+│   │   ├── PluginEditor      — top-level GUI layout (750×800)
 │   │   ├── SampleTabPanel    — tabbed per-sample editor
-│   │   └── WaveformDisplay   — interactive waveform with drag markers
+│   │   ├── WaveformDisplay   — interactive waveform with drag markers
+│   │   ├── TeensyEmulationPanel — LCD + knob emulation of hardware UI
+│   │   └── FreezeBufferDisplay  — real-time freeze buffer waveform
 │   ├── audio/            # File loading (WAV, MP3, FLAC)
 │   │   ├── AudioFileLoader   — reads audio files into memory
 │   │   └── PresetManager     — save/load presets with embedded samples
 │   └── hardware/         # Future Teensy 4.1 hardware port
-├── unit_tests/           # Automated tests (numeric validation, no audio)
+├── unit_tests/           # 56 tests, 251 assertions (Catch2 v3.4.0)
 ├── docs/                 # Architecture and porting guides
 └── CMakeLists.txt        # Build configuration
 ```
@@ -432,10 +445,12 @@ Also handles `loadSample(index, file)` using JUCE's `AudioFormatManager` and sto
 │                        │   loop start/end)       │
 ├────────────────────────┴─────────────────────────┤
 │  Mixer controls (parallel mode, input/sampler)   │
+├──────────────────────────────────────────────────┤
+│  TeensyEmulationPanel (LCD + knobs + button)     │
 └──────────────────────────────────────────────────┘
 ```
 
-750×500 window divided into three sections. The left area is a `SampleTabPanel`, the right column holds freeze effect sliders/toggles, and the bottom strip has mixer controls. All controls are auto-synced to DSP parameters via JUCE `SliderAttachment` / `ButtonAttachment` / `ComboBoxAttachment`.
+750×800 window divided into four sections. The left area is a `SampleTabPanel`, the right column holds freeze effect sliders/toggles, a mixer controls strip, and at the bottom a `TeensyEmulationPanel` that emulates the hardware LCD display and 3 knobs + action button. All controls are auto-synced to DSP parameters via JUCE `SliderAttachment` / `ButtonAttachment` / `ComboBoxAttachment`.
 
 #### [`SampleTabPanel.h`](src/juce/SampleTabPanel.h) / [`.cpp`](src/juce/SampleTabPanel.cpp)
 
@@ -560,11 +575,32 @@ to ensure all DSP logic is correct before any hardware glue is written.
 - Per-sample editor with waveform display and draggable markers
 - MIDI triggering (C1, C2, C3, C4 → samples 1–4)
 - Per-sample Obey Note Off toggle
-- Build verified (VST3 + Standalone on Windows, macOS, Linux)
+- Build verified (VST3 + Standalone on Windows)
 
-#### Phase 3: Polish & Testing — In Progress
-- DAW testing (Reaper, Ableton, etc.)
-- Preset system (save/load full state + embedded samples)
+#### Phase 3: Effects & Menu System — Completed ✓
+- Per-sample insert effects (Distortion, BitCrush, SimpleFilter, NoEffect)
+- EffectLibrary static factory with abstract Effect base class
+- TeensyMenu 5-page LCD state machine (Sample 1–4, Preset)
+- TeensyEmulationPanel in JUCE UI (LCD display + 3 knobs + action button)
+- FreezeBufferDisplay real-time waveform visualization
+- Per-sample gain control
+
+#### Phase 4: Preset System — Completed ✓
+- XML file-based presets (8 slots, stored in AppData)
+- 3-way preset function: Save / Reload / LoadOther
+- Dirty tracking with * indicator on LCD
+- Destination pickup guard (prevents preset jumps on knob switch)
+- Default Preset1.xml + Preset2.xml created on first launch
+
+#### Phase 5: Refactoring & Optimization — Completed ✓
+- Sampler: cached totalFrames_, combined silence guards, float interpolation
+- Distortion: fastTanh rational approximation (~22 cycles vs ~100 for std::tanh)
+- PluginProcessor: member buffers (no stack arrays), cached param ID strings
+- Teensy portability audit: no blockers, 97%+ CPU headroom
+- 56 tests, 251 assertions all passing
+
+#### Phase 6: Polish & Testing — In Progress
+- DAW testing (Reaper)
 - File loading (WAV, MP3, FLAC via JUCE AudioFormatManager)
 
 ### Teensy 4.1 Hardware Port
@@ -616,10 +652,11 @@ without any modifications — the same code runs on both VST and hardware.
 
 ### Why This Works
 
-- No virtual function calls, no dynamic allocation in real-time audio paths
+- Minimal virtual dispatch (~6 cycles for Effect::processSample, acceptable)
 - `std::atomic<>` for parameter changes (lock-free on ARM Cortex-M7)
-- Fixed buffer sizes, known at compile time
+- No dynamic allocation in real-time audio paths (vectors allocated in prepare())
 - All timing and math is platform-agnostic
+- Worst-case DSP load: ~247 cycles/sample = 2.8% of Teensy budget (97%+ headroom)
 
 ### Porting Strategy
 

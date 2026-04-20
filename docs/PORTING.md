@@ -28,11 +28,19 @@ Teensy means rewriting only the I/O glue, not the DSP.
 ```
 src/dsp/
 ├── CircularBuffer.h/cpp       ✓ No changes
-├── Sampler.h/cpp              ✓ No changes (includes per-pad gain)
-├── SamplerBank.h/cpp          ✓ No changes (setSampleGain forwarding)
+├── Sampler.h/cpp              ✓ No changes (per-pad gain, cached totalFrames_)
+├── SamplerBank.h/cpp          ✓ No changes
 ├── Mixer.h/cpp                ✓ No changes
 ├── FreezeEffect.h/cpp         ✓ No changes (supports 1/32 + 1/64 stutter)
-└── AudioBuffer.h/cpp          ✓ No changes
+├── AudioBuffer.h/cpp          ✓ No changes
+├── TeensyMenu.h/cpp           ✓ No changes (5-page menu, 3-way preset, pickup mode)
+└── effects/
+    ├── Effect.h               ✓ Abstract base
+    ├── NoEffect.h             ✓ Passthrough
+    ├── Distortion.h           ✓ fastTanh approximation (~28 cycles/sample)
+    ├── BitCrush.h             ✓ Sample quantisation (~31 cycles/sample)
+    ├── SimpleFilter.h         ✓ One-pole low-pass (~14 cycles/sample)
+    └── EffectLibrary.h        ✓ Static factory (NUM_EFFECTS=4)
 ```
 
 ### JUCE glue — replaced entirely
@@ -857,3 +865,83 @@ The Teensy `PresetManager` is structurally identical to the VST's
   in `src/dsp/` itself (not worked around), so the VST build stays in sync
 
 See `src/hardware/teensy/` for implementation files as they are created.
+
+---
+
+## 13. TeensyMenu — Portability of the UI Emulation Layer
+
+### Overview
+
+The `TeensyMenu` DSP class (`src/dsp/TeensyMenu.h/cpp`) is **fully portable** — pure
+C++17, no JUCE, no display-specific code. It produces text strings for 4 zones and
+exposes `getZoneText(int zone)` / `getRow(int row)`. Writing those strings to any
+2×16 character LCD is straightforward.
+
+The JUCE wrapper `TeensyEmulationPanel` (`src/juce/TeensyEmulationPanel.h/cpp`) is
+VST-only and has no Teensy equivalent — it is replaced by direct LCD calls in
+`UIController`.
+
+### Implementing the LCD output on Teensy
+
+```cpp
+// UIController.cpp (Teensy)
+#include <LiquidCrystal_I2C.h>   // or LiquidCrystal for parallel LCD
+#include "TeensyMenu.h"
+
+LiquidCrystal_I2C lcd(0x27, 16, 2);
+TeensyMenu menu;
+
+void updateLCDDisplay() {
+    lcd.setCursor(0, 0);
+    lcd.print(menu.getRow(0).c_str());
+    lcd.setCursor(0, 1);
+    lcd.print(menu.getRow(1).c_str());
+}
+```
+
+---
+
+### ⚠ VST-only feature: negative-character (inverted) highlighting
+
+In the VST's `TeensyEmulationPanel`, the selected function on the Preset page
+(Save or Reload) is highlighted using **inverted colours** — the zone gets a solid
+bright-green fill with black text, mimicking a pixel-level "negative character"
+effect. This is drawn in JUCE using `Graphics::fillRect()` before `drawText()`.
+
+**Standard 16×2 character LCDs (HD44780-compatible) do not support this.**
+The HD44780 controller renders characters from a fixed ROM; there is no way to
+invert individual character cells without replacing them with custom characters
+(of which only 8 are available and they are 5×8 pixels — too coarse for legible
+inverted text).
+
+**Adaptation for Teensy: use a `>` cursor prefix instead.**
+
+Replace the inverted-colour highlight with a `>` marker prepended to the selected
+zone's text. `TeensyMenu::getZoneText()` already handles this: on the Preset page,
+the selected function's zone text must be formatted to lead with `>`.
+
+Update `TeensyMenu::getZoneText()` for zone 2 and 3 on the Preset page:
+
+```cpp
+case 2:  // Zone 3 — "save"
+    if (currentPage_ == Page::Preset) {
+        bool selected = (selectedFunction_ == PresetFunction::Save);
+        return fitToWidth(selected ? ">save" : " save", 8);
+    }
+    // ... effect name on sample pages (unchanged)
+
+case 3:  // Zone 4 — "reload"
+    if (currentPage_ == Page::Preset) {
+        bool selected = (selectedFunction_ == PresetFunction::Reload);
+        return fitToWidth(selected ? ">reload" : " reload", 8);
+    }
+    // ... effect value on sample pages (unchanged)
+```
+
+This gives ">`save`   " / " `reload` " on the LCD when Save is selected, and
+" `save`   " / ">`reload`" when Reload is selected — identical information density
+to the inverted highlighting, and fully compatible with any character LCD.
+
+> **Note for VST build:** When the `>` cursor approach is adopted, the inverted
+> background drawing in `TeensyEmulationPanel::paint()` can be kept for visual
+> flair, or removed for exact LCD parity — your choice.

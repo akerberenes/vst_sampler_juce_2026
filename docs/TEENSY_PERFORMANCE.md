@@ -31,19 +31,25 @@ Minimum Headroom: 30% reserved for:
 
 ### Example: How Many Samplers Can We Run?
 ```
-4 Samplers × 120 cycles/sample = 480 cycles/sample
-  (includes per-pad gain multiply: 1 extra mult = +2 cycles/sample/pad)
-CircularBuffer read + interpolate = 20 cycles/sample
-Mixer (sequential mode) = 8 cycles/sample
-Total DSP per sample = 516 cycles
+4 Samplers × 47 cycles/sample = 188 cycles/sample
+  (includes: interpolation ~8, gain ~2, virtual dispatch ~6, effect ~28 [Distortion])
+SamplerBank mixing: ~16 cycles/sample
+Mixer (sequential mode): ~8 cycles/sample
+FreezeEffect (frozen, with stutter): ~31 cycles/sample
+Total DSP per sample = 243 cycles
 
 Available: 8,742 cycles/sample
-Used: 516 cycles/sample
-Utilization: 5.9% ✓ (Lots of room for freeze effect)
+Used: 243 cycles/sample (worst case with 4× BitCrush: 247)
+Utilization: 2.8% ✓ (97%+ headroom remaining)
 ```
 
-Note: the per-pad gain costs only 1 extra multiply per sample per pad
-(2 cycles × 4 pads = 8 cycles/sample total). Negligible.
+### Per-Effect Cycle Costs (updated 2026-04-20)
+```
+NoEffect:     ~0 cycles (inlined passthrough)
+Distortion:  ~28 cycles (fastTanh rational approx, no std::tanh)
+BitCrush:    ~31 cycles (std::round + division)
+SimpleFilter: ~14 cycles (one-pole IIR, single multiply-accumulate)
+```
 
 ---
 

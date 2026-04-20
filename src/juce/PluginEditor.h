@@ -3,6 +3,7 @@
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "SampleTabPanel.h"
 #include "FreezeBufferDisplay.h"
+#include "TeensyEmulationPanel.h"
 
 class PluginProcessor;
 
@@ -91,6 +92,9 @@ private:
 
     // --- Pad buttons ---
     juce::TextButton padButtons_[4];
+
+    // --- Teensy UI emulation panel ---
+    TeensyEmulationPanel teensyPanel_;
 
     // --- Parameter attachments ---
     // Declared as unique_ptr so they are destroyed before the Slider/Button members
