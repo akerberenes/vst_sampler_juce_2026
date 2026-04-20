@@ -2,6 +2,8 @@
 #include "CircularBuffer.h"
 #include <cmath>
 
+using namespace Catch;
+
 TEST_CASE("CircularBuffer allocation", "[CircularBuffer]")
 {
     SECTION("Constructor with size")
@@ -115,13 +117,6 @@ TEST_CASE("CircularBuffer read position", "[CircularBuffer]")
         REQUIRE(pos == Approx(0.5f).epsilon(0.01f));
     }
     
-    SECTION("Jump read pointer by fraction")
-    {
-        cb.setReadPosition(0.0f);
-        cb.jumpReadPointerByFraction(0.25f);
-        float pos = cb.getReadPosition();
-        REQUIRE(pos == Approx(0.25f).epsilon(0.01f));
-    }
 }
 
 TEST_CASE("CircularBuffer clear", "[CircularBuffer]")

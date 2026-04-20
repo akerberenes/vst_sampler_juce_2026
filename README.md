@@ -171,8 +171,8 @@ This is the engine inside the Freeze Effect. Think of a tape loop that constantl
 
 **Controls:**
 - **Playback speed:** 1.0 = normal pitch, 0.5 = half speed / octave down, 2.0 = double speed / octave up
-- **Loop start/end:** Shrink the loop region to create shorter stutter patterns
-- **Read pointer jump:** The stutter mechanism — snaps the playhead back rhythmically
+- **Loop position/length:** Control what region of the buffer plays (shorter = tighter stutter grains)
+- **Read pointer retrigger:** The stutter mechanism — resets the playhead to loop start rhythmically
 
 ---
 
@@ -201,7 +201,7 @@ Orchestrates everything: recording, freezing, stuttering, speed, and dry/wet mix
                │  │  recording)          │     dry signal     │
                │  └──────────────────────┘     via dry/wet    │
                │                                              │
-               │  Stutter: jumps read pointer on the beat     │
+               │  Stutter: retriggers read pointer at loop start on the beat  │
                │  Speed:   changes how fast the loop plays    │
                │  Dry/Wet: blend between original and frozen  │
                └──────────────────────────────────────────────┘ ──→ Output
@@ -209,9 +209,9 @@ Orchestrates everything: recording, freezing, stuttering, speed, and dry/wet mix
 
 **Stutter timing example at 120 BPM:**
 ```
-  1/8 beat stutter = jumps every 0.25 seconds (fast choppy repeat)
-  1/4 beat stutter = jumps every 0.5 seconds  (rhythmic repeat)
-  1/2 beat stutter = jumps every 1.0 second   (slow echo feel)
+  1/8 beat stutter = retriggers every 0.25 seconds (fast choppy repeat)
+  1/4 beat stutter = retriggers every 0.5 seconds  (rhythmic repeat)
+  1/2 beat stutter = retriggers every 1.0 second   (slow echo feel)
 ```
 
 ---
@@ -262,8 +262,8 @@ Here's how all the modules connect, from start to finish:
 
 ## Features
 
-- **4-Sample One-Shot Sampler** with tempo-synced looping and per-sample start/end region editing
-- **Tabbed Waveform Editor** with draggable start/end markers per sample
+- **4-Sample One-Shot Sampler** with tempo-synced looping and per-sample loop position/length editing
+- **Tabbed Waveform Editor** with draggable markers per sample
 - **MIDI Triggering** — C1, C2, C3, C4 mapped to samples 1–4, with per-sample Note Off control
 - **Echo Freeze Effect** on master output
 - **Stutter Control** with rhythmic quantization (locked to BPM)
@@ -375,14 +375,16 @@ A ring buffer that continuously records incoming audio. When frozen, writing sto
 mixer output ──→ [ FreezeEffect ] ──→ final audio
 ```
 
-Orchestrates the CircularBuffer plus dry/wet blending and beat-synced stutter timing. Controls:
+Orchestrates the CircularBuffer plus beat-synced stutter timing. Controls:
 - `setFrozen(bool)` — toggle capture vs. loop playback.
-- `setStutterFraction(f)` — how often the read pointer jumps back (smaller = faster chop).
+- `setStutterFraction(f)` — how often the read pointer retriggers at loop start (smaller = faster chop).
 - `setPlaybackSpeed(f)` — pitch-shift the frozen loop.
-- `setLoopStart(f)` / `setLoopEnd(f)` — narrow the loop window.
-- `setDryWetMix(f)` — blend between original (dry) and frozen (wet) signal.
+- `setLoopLength(f)` — fraction of the buffer used as the loop window (1.0 = full buffer).
+- `setLoopPosition(f)` — shift the window start within the buffer (clamped so end stays in bounds).
 
-`processBlock()` does the work: pushes audio into the buffer, reads frozen output, mixes dry/wet.
+When frozen, output is always 100% wet (the frozen loop only — no dry signal blended in).
+
+`processBlock()` does the work: pushes audio into the buffer, reads frozen output.
 
 ---
 

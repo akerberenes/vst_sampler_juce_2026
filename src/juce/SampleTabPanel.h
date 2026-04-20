@@ -58,6 +58,10 @@ public:
     // Updates the waveform display, resets markers, and pushes 0/1 to APVTS.
     void sampleLoaded(int index);
 
+    // Switch to the tab for pad `index` (0-3). Public so PluginEditor can
+    // drive tab selection from the pad buttons.
+    void selectTab(int index);
+
 private:
     // Type aliases for verbose APVTS attachment types.
     using SliderAttachment = juce::AudioProcessorValueTreeState::SliderAttachment;
@@ -85,17 +89,23 @@ private:
         // Range 0.0 (silence) → 1.0 (unity) → 2.0 (+6 dB boost).
         juce::Label  volumeLabel;
         juce::Slider volumeSlider;
-        std::unique_ptr<ButtonAttachment> obeyAttachment; // Connects button to APVTS.
-        std::unique_ptr<SliderAttachment> gainAttachment; // Connects slider to APVTS sampleGain.
+        // Loop position / length sliders (replace draggable waveform markers).
+        // loopPosSlider: start of the active region (0.0 = beginning).
+        // loopLenSlider: length of the active region (1.0 = full sample).
+        juce::Label  loopPosLabel;
+        juce::Slider loopPosSlider;
+        juce::Label  loopLenLabel;
+        juce::Slider loopLenSlider;
+        std::unique_ptr<ButtonAttachment> obeyAttachment;    // Connects button to APVTS.
+        std::unique_ptr<SliderAttachment> gainAttachment;    // Connects slider to APVTS sampleGain.
+        std::unique_ptr<SliderAttachment> loopPosAttachment; // Connects to APVTS sampleLoopPosN.
+        std::unique_ptr<SliderAttachment> loopLenAttachment; // Connects to APVTS sampleLoopLenN.
     };
     TabContent tabs_[4];
 
     // FileChooser must persist for the lifetime of the async callback.
     // Declared as a member so it stays alive after loadButtonClicked() returns.
     std::unique_ptr<juce::FileChooser> fileChooser_;
-
-    // Show tab `index`, hide all others. Updates button colours.
-    void selectTab(int index);
 
     // Opens an async file chooser and loads the selected file onto pad `index`.
     void loadButtonClicked(int index);

@@ -2,6 +2,7 @@
 
 #include <juce_audio_processors/juce_audio_processors.h>
 #include "SampleTabPanel.h"
+#include "FreezeBufferDisplay.h"
 
 class PluginProcessor;
 
@@ -12,7 +13,7 @@ class PluginProcessor;
  * PluginProcessor::createEditor() and destroys it when the user closes
  * the plugin window.
  *
- * --- Layout (750 x 500) ---
+ * --- Layout (750 x 550) ---
  *
  *  +-------------------------------------------+
  *  |        SAMPLER WITH FREEZE  (title)        |  <- 40px
@@ -21,13 +22,14 @@ class PluginProcessor;
  *  |  SampleTabPanel       |  [FREEZE]         |  <- 370px
  *  |  (tabs + waveforms)   |  Stutter  [....]  |
  *  |  400px wide           |  Speed    [....]  |
- *  |                       |  Dry/Wet  [....]  |
- *  |                       |  Loop Start [...] |
- *  |                       |  Loop End  [...]  |
+ *  |                       |  Loop Len  [....]  |
+ *  |                       |  Loop Pos  [....]  |
  *  +-----------------------+-------------------+
  *  |  MIXER                                    |  <- 90px
  *  |  [Parallel Mode]                          |
- *  |  Input Level  [slider]  Sampler Level [...]
+ *  |  Input Level  [slider]  Sampler Level [...]|
+ *  +-------------------------------------------+
+ *  |  PADS   [1] [2] [3] [4]                   |  <- 50px
  *  +-------------------------------------------+
  *
  * --- Parameter attachments ---
@@ -72,14 +74,14 @@ private:
     SampleTabPanel sampleTabPanel_;
 
     // --- Right section: freeze controls ---
-    juce::ToggleButton freezeButton_;
-    juce::ComboBox     stutterRateBox_;
-    juce::Slider       speedSlider_;
-    juce::Slider       dryWetSlider_;
-    juce::Slider       loopStartSlider_;
-    juce::Slider       loopEndSlider_;
-    juce::Label        stutterLabel_, speedLabel_, dryWetLabel_;
-    juce::Label        loopStartLabel_, loopEndLabel_;
+    juce::ToggleButton  freezeButton_;
+    juce::Slider        stutterKnob_;  // Rotary, 7 discrete snap positions (1–1/64 beat).
+    juce::Slider        speedSlider_;
+    juce::Slider        loopLengthSlider_;
+    juce::Slider        loopPositionSlider_;
+    juce::Label         stutterLabel_, speedLabel_;
+    juce::Label         loopLengthLabel_, loopPositionLabel_;
+    FreezeBufferDisplay freezeBufferDisplay_;
 
     // --- Bottom section: mixer strip ---
     juce::ToggleButton parallelModeButton_;
@@ -87,20 +89,21 @@ private:
     juce::Slider       samplerLevelSlider_;
     juce::Label        inputLevelLabel_, samplerLevelLabel_;
 
+    // --- Pad buttons ---
+    juce::TextButton padButtons_[4];
+
     // --- Parameter attachments ---
     // Declared as unique_ptr so they are destroyed before the Slider/Button members
     // (attachments deregister as listeners in their destructor; the control must
     // still exist at that point).
     using SliderAttachment   = juce::AudioProcessorValueTreeState::SliderAttachment;
     using ButtonAttachment   = juce::AudioProcessorValueTreeState::ButtonAttachment;
-    using ComboBoxAttachment = juce::AudioProcessorValueTreeState::ComboBoxAttachment;
 
     std::unique_ptr<ButtonAttachment>   freezeAttachment_;
-    std::unique_ptr<ComboBoxAttachment> stutterAttachment_;
+    std::unique_ptr<SliderAttachment>   stutterAttachment_;
     std::unique_ptr<SliderAttachment>   speedAttachment_;
-    std::unique_ptr<SliderAttachment>   dryWetAttachment_;
-    std::unique_ptr<SliderAttachment>   loopStartAttachment_;
-    std::unique_ptr<SliderAttachment>   loopEndAttachment_;
+    std::unique_ptr<SliderAttachment>   loopLengthAttachment_;
+    std::unique_ptr<SliderAttachment>   loopPositionAttachment_;
     std::unique_ptr<ButtonAttachment>   parallelAttachment_;
     std::unique_ptr<SliderAttachment>   inputLevelAttachment_;
     std::unique_ptr<SliderAttachment>   samplerLevelAttachment_;

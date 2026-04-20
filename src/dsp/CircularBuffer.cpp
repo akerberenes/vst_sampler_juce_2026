@@ -130,16 +130,6 @@ float CircularBuffer::getReadPosition() const
     return static_cast<float>(readPos_.load() / buffer_.size());
 }
 
-void CircularBuffer::jumpReadPointerByFraction(float fraction)
-{
-    if (buffer_.empty())
-        return;
-    // Jump within the active loop region, not the whole buffer.
-    // E.g. fraction=0.25 with a loop region of 48000 samples → jump 12000 samples.
-    int loopSize = static_cast<int>(buffer_.size() * (loopEndFraction_ - loopStartFraction_));
-    readPos_.store(readPos_.load() + fraction * loopSize);
-}
-
 double CircularBuffer::getLoopAdjustedReadPos() const
 {
     if (buffer_.empty())

@@ -3,10 +3,12 @@
 #include "FreezeEffect.h"
 #include "Mixer.h"
 #include <vector>
+
+using namespace Catch;
 #include <cmath>
 
 // Helper: create test sine wave
-std::vector<float> createTestWave(int numSamples, int sampleRate, float frequency)
+inline std::vector<float> createTestWave(int numSamples, int sampleRate, float frequency)
 {
     std::vector<float> wave(numSamples);
     for (int i = 0; i < numSamples; ++i)

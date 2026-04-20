@@ -117,6 +117,21 @@ public:
     // Read-only; the vector is updated by loadSample() on the main thread.
     const std::vector<float>& getSampleWaveform(int index) const;
 
+    // Copies the current freeze buffer content into `out` for the waveform display.
+    // Best-effort snapshot (no lock); tearing is acceptable for visualisation.
+    void getFreezeBufferSnapshot(std::vector<float>& out) const
+    {
+        freezeEffect_.copyBufferSnapshot(out);
+    }
+
+    // Trigger sample playback on pad `index` (0-3) from the UI.
+    // Same behaviour as a MIDI note-on: plays 4 beats at the current tempo.
+    void triggerPad(int index);
+
+    // Stop sample playback on pad `index` (0-3) if its "obeyNoteOff" param is true.
+    // Same behaviour as a MIDI note-off.
+    void stopPad(int index);
+
 private:
     // --- DSP pipeline ---
 
@@ -147,6 +162,9 @@ private:
 
     // Display name for each loaded sample (filename without extension).
     juce::String sampleNames_[4];
+
+    // Full file paths of loaded samples (used for state persistence).
+    juce::String samplePaths_[4];
 
     // Per-pad waveform data (copy of channel 0) for the WaveformDisplay UI component.
     // Populated on load; read by the UI on the main thread.

@@ -10,6 +10,7 @@ add_executable(DSPTests
     test_Mixer.cpp
     test_FreezeEffect.cpp
     test_Integration.cpp
+    catch2/catch_amalgamated.cpp
 )
 
 target_compile_features(DSPTests PRIVATE cxx_std_17)
@@ -30,6 +31,7 @@ if(NOT EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/catch2/catch.hpp")
 endif()
 
 target_include_directories(DSPTests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}")
+target_include_directories(DSPTests PRIVATE "${CMAKE_CURRENT_SOURCE_DIR}/catch2")
 target_include_directories(DSPTests PRIVATE "${CMAKE_SOURCE_DIR}/src/dsp")
 
 # Add as test

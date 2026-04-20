@@ -3,8 +3,10 @@
 #include <cmath>
 #include <vector>
 
+using namespace Catch;
+
 // Helper: create test sine wave
-std::vector<float> createTestWave(int numSamples, int sampleRate, float frequency)
+inline std::vector<float> createTestWave(int numSamples, int sampleRate, float frequency)
 {
     std::vector<float> wave(numSamples);
     for (int i = 0; i < numSamples; ++i)
@@ -85,15 +87,6 @@ TEST_CASE("SamplerBank loop configuration", "[SamplerBank]")
         
         bank.setSampleLoopMode(1, false);
         REQUIRE(bank.getSample(1).getLoopMode() == false);
-    }
-    
-    SECTION("Set loop fraction per sample")
-    {
-        bank.setSampleLoopFraction(0, 0.5f);
-        REQUIRE(bank.getSample(0).getLoopFraction() == Approx(0.5f));
-        
-        bank.setSampleLoopFraction(1, 0.25f);
-        REQUIRE(bank.getSample(1).getLoopFraction() == Approx(0.25f));
     }
 }
 

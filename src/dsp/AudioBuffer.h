@@ -1,7 +1,6 @@
 #pragma once
 
 #include <vector>
-#include <cstring>
 
 /**
  * AudioBuffer
@@ -51,13 +50,6 @@ public:
     // Returns a read-only float* to the start of channel `channel`'s sample array.
     // Returns nullptr if `channel` is out of bounds.
     const float* getReadPointer(int channel) const;
-
-    // Returns a float** covering all channels (needed by APIs that want float**).
-    // The returned pointer is valid until the next call to allocate() or clear().
-    float** getArrayOfWritePointers();
-
-    // Const version of the above (for read-only contexts).
-    const float* const* getArrayOfReadPointers() const;
 
     // --- Info ---
 

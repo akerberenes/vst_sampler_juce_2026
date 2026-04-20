@@ -1,6 +1,5 @@
 #include "Mixer.h"
 #include <algorithm>
-#include <cstring>
 
 Mixer::Mixer()
     : inputLevel_(1.0f), samplerLevel_(1.0f)

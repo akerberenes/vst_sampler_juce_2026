@@ -59,7 +59,8 @@ src/hardware/teensy/
 ├── MidiInput.h/cpp                # USB/Serial MIDI handler
 ├── UIController.h/cpp             # Pots, buttons, sample-select cycling
 ├── TempoController.h/cpp          # BPM from pot or external clock
-└── SampleLoader.h/cpp             # WAV parser + PSRAM loader
+├── SampleLoader.h/cpp             # WAV parser + PSRAM loader
+└── PresetManager.h/cpp            # SD-backed preset save/restore (one preset per song)
 ```
 
 ---
@@ -186,7 +187,7 @@ stutter zone mapping) without needing hardware.
 4. **Run Simulation** in VS Code — twist virtual pots, press virtual buttons.
 5. **Pass criterion:** Serial output shows correct DSP calls for every control
    gesture. The sample-select button cycles pads 0→1→2→3→0. Stutter pot maps to
-   exactly 7 zones. All gain/start/end fractions are in range.
+   exactly 7 zones. All gain/loop-pos/loop-len fractions are in range.
 
 ### Phase D — Sample loading (Wokwi + SD simulation)
 
@@ -285,13 +286,14 @@ void updateTempoKnob() {
 
 **JUCE:** Host sends parameter updates via `AudioProcessorValueTreeState`
 ```cpp
-dsp::freezeEffect_.setDryWetMix(parameterValue);
+dsp::freezeEffect_.setLoopLength(parameterValue);
 ```
 
 **Teensy:** Local UI controls read in `loop()`
 ```cpp
 void updateUI() {
-    freezeEffect_.setDryWetMix(readPotentiometer(DRY_WET_PIN) / 1023.0f);
+    freezeEffect_.setLoopLength(readPotentiometer(LOOP_LENGTH_PIN) / 1023.0f);
+    freezeEffect_.setLoopPosition(readPotentiometer(LOOP_POS_PIN) / 1023.0f);
     freezeEffect_.setFrozen(readButton(FREEZE_BUTTON));
 }
 ```
@@ -328,16 +330,15 @@ All DSP calls are identical; only the control source changes.
 |-----|----------|----------|
 | Stutter Rate | Select stutter division (1 beat → 1/64 beat) | `setStutterFraction()` |
 | Speed | Playback speed 0.25×–4× | `setPlaybackSpeed()` |
-| Dry/Wet | Freeze mix 0–100% | `setDryWetMix()` |
-| Loop Start | Freeze loop start position | `setLoopStart()` |
-| Loop End | Freeze loop end position | `setLoopEnd()` |
+| Loop Length | Fraction of buffer used as loop window | `setLoopLength()` |
+| Loop Position | Shift the loop window within the buffer | `setLoopPosition()` |
 | Input Level | Mixer input gain | `setInputLevel()` |
 | Sampler Level | Mixer sampler gain | `setSamplerLevel()` |
 | **Sample Gain** | Per-pad volume (acts on selected pad) | `setSampleGain()` |
-| **Sample Start** | Per-pad start fraction (acts on selected pad) | `setSampleStartFraction()` |
-| **Sample End** | Per-pad end fraction (acts on selected pad) | `setSampleEndFraction()` |
+| **Sample Loop Pos** | Per-pad loop position fraction (acts on selected pad) | `setSampleLoopPosFraction()` |
+| **Sample Loop Len** | Per-pad loop length fraction (acts on selected pad) | `setSampleLoopLenFraction()` |
 
-The **Sample Select** button selects which pad the per-sample pots (gain, start, end)
+The **Sample Select** button selects which pad the per-sample pots (gain, loop pos, loop len)
 currently control. An LED or small display indicates the active pad (1–4).
 
 ### Stutter Rate Mapping
@@ -395,14 +396,13 @@ void loop() {
 
 void updateGlobalUI() {
     freezeEffect.setFrozen(readButton(FREEZE_BUTTON));
-    freezeEffect.setDryWetMix(readPot(DRY_WET_POT) / 1023.0f);
     freezeEffect.setPlaybackSpeed(mapFloat(readPot(SPEED_POT), 0, 1023, 0.25f, 4.0f));
     
     int stutterZone = readPot(STUTTER_POT) * 7 / 1024;
     freezeEffect.setStutterFraction(kStutterValues[stutterZone]);
     
-    freezeEffect.setLoopStart(readPot(LOOP_START_POT) / 1023.0f);
-    freezeEffect.setLoopEnd(readPot(LOOP_END_POT) / 1023.0f);
+    freezeEffect.setLoopLength(readPot(LOOP_LENGTH_POT) / 1023.0f);
+    freezeEffect.setLoopPosition(readPot(LOOP_POS_POT) / 1023.0f);
     
     bool parallel = readButton(PARALLEL_BUTTON);
     mixer.setMode(parallel ? Mixer::Mode::Parallel : Mixer::Mode::Sequential);
@@ -419,11 +419,11 @@ void updatePerSampleControls() {
     float gain = readPot(SAMPLE_GAIN_POT) / 1023.0f * 2.0f;
     samplerBank.setSampleGain(currentSampleTab, gain);
     
-    // Per-pad start/end region
-    float start = readPot(SAMPLE_START_POT) / 1023.0f;
-    float end   = readPot(SAMPLE_END_POT)   / 1023.0f;
-    samplerBank.setSampleStartFraction(currentSampleTab, start);
-    samplerBank.setSampleEndFraction(currentSampleTab, end);
+    // Per-pad loop position/length region
+    float loopPos = readPot(SAMPLE_LOOP_POS_POT) / 1023.0f;
+    float loopLen = readPot(SAMPLE_LOOP_LEN_POT) / 1023.0f;
+    samplerBank.setSampleLoopPosFraction(currentSampleTab, loopPos);
+    samplerBank.setSampleLoopLenFraction(currentSampleTab, loopLen);
 }
 ```
 
@@ -599,7 +599,7 @@ and placed in the root of the SD card so `loadWavFromSD` can find them in `setup
 - [ ] Serial output confirms correct DSP calls for every control
 - [ ] Sample-select cycling verified (0→1→2→3→0)
 - [ ] Stutter zone mapping verified (7 discrete zones)
-- [ ] All gain/start/end fractions confirmed in range
+- [ ] All gain/loop-pos/loop-len fractions confirmed in range
 
 ### Phase D — Sample loading (Wokwi + SD)
 - [ ] Implement `SampleLoader.cpp` (WAV parser)
@@ -620,14 +620,235 @@ and placed in the root of the SD card so `loadWavFromSD` can find them in `setup
 
 ### Phase F — Polish
 - [ ] Wire mixer controls (parallel toggle, input/sampler level)
-- [ ] Wire all freeze pots (stutter, speed, dry/wet, loop start/end)
-- [ ] Wire per-sample pots (gain, start, end) + sample-select cycling
-- [ ] Add preset storage (SD card)
+- [ ] Wire all freeze pots (stutter, speed, dry/wet, loop pos/len)
+- [ ] Wire per-sample pots (gain, loop pos, loop len) + sample-select cycling
 - [ ] Performance profiling and optimization
+
+### Phase G — Preset system (see section 11)
+- [ ] Define `Preset` struct (sample paths + all parameter values)
+- [ ] Implement `PresetManager::loadPreset(n)` (reads `.PRE` → DSP + WAVs)
+- [ ] Implement `PresetManager::savePreset(n)` (writes live state → `.PRE`)
+- [ ] Wire preset-select button/encoder to `loadPreset()`
+- [ ] Wire save gesture (hold SAVE button ≥ 2 s) to `savePreset()`
+- [ ] Confirm that loading a preset reverts unsaved parameter changes
+- [ ] Confirm that twisting a pot after load sets `dirty_` without touching SD
+- [ ] Test missing-file path (WAV deleted from SD) → graceful skip
+- [ ] Test ≥ 10 presets round-trip on real SD card without corruption
 
 ---
 
-## 11. Debugging Tips
+## 11. Preset Management System
+
+### Motivation
+
+The Teensy version is intended to be a live performance instrument where each song
+has its own set of samples and parameter values. When you load a preset, the machine
+should be in exactly the state you saved it in. If you then tweak a knob, the change
+should apply live but not be persisted until you explicitly save. Reloading the preset
+discards any unsaved edits — identical semantics to a hardware sampler's "compare"
+button.
+
+This is the hardware equivalent of the VST's `getStateInformation` / `setStateInformation`
+(implemented in `src/juce/PluginProcessor.cpp`), but reading and writing to an SD card
+instead of a DAW `MemoryBlock`.
+
+---
+
+### SD Card Layout
+
+Two layouts are practical. Choose based on whether samples are shared across songs:
+
+**Option A — shared sample pool (samples reused across presets):**
+```
+SD:/
+├── SAMPLES/
+│   ├── kick.wav
+│   ├── snare.wav
+│   └── ...              ← samples referenced by path in each preset
+└── PRESETS/
+    ├── SONG_01.PRE
+    ├── SONG_02.PRE
+    └── ...
+```
+
+**Option B — self-contained preset folders (recommended for live use):**
+```
+SD:/
+├── SONG_01/
+│   ├── preset.cfg       ← parameter values (text or binary)
+│   ├── sample0.wav
+│   ├── sample1.wav
+│   ├── sample2.wav
+│   └── sample3.wav
+├── SONG_02/
+│   └── ...
+```
+Option B is safer for live use: renaming or moving the folder keeps the preset
+self-contained. The path stored in the config can be relative (`sample0.wav`
+means `<preset_folder>/sample0.wav`).
+
+---
+
+### Preset Struct
+
+```cpp
+// src/hardware/teensy/PresetManager.h
+
+struct Preset {
+    // Sample paths (relative to the preset folder on SD)
+    char samplePaths[4][64];
+
+    // FreezeEffect parameters
+    float loopLength;       // 0.0–1.0
+    float loopPosition;     // 0.0–1.0
+    float stutterFraction;  // one of the 7 kStutterValues
+    float playbackSpeed;    // 0.25–4.0
+    bool  freezeEnabled;
+
+    // Per-pad parameters
+    float sampleGain[4];        // 0.0–2.0
+    float sampleStart[4];       // 0.0–1.0
+    float sampleEnd[4];         // 0.0–1.0
+    bool  obeyNoteOff[4];
+
+    // Mixer parameters
+    float inputLevel;
+    float samplerLevel;
+    bool  parallelMode;
+};
+```
+
+The struct can be written as plain binary (`fwrite`/`fread`, ~200 bytes) or as a
+human-readable key=value text file. Text is preferable for debugging and manual
+editing; binary is simpler to implement.
+
+---
+
+### PresetManager Class
+
+```cpp
+// src/hardware/teensy/PresetManager.h
+
+class PresetManager {
+public:
+    // Reads preset N from SD, loads WAVs into PSRAM, applies all parameters
+    // to the live DSP objects. Clears dirty_.
+    // loadPreset() mutes audio output while WAVs are being decoded from SD.
+    void loadPreset(int n);
+
+    // Writes the current liveState_ back to preset N on SD. Clears dirty_.
+    // Call only from a button gesture (hold ≥ 2 s), never from the audio ISR.
+    void savePreset(int n);
+
+    // Returns true if any parameter has been changed since the last load/save.
+    bool isDirty() const { return dirty_; }
+
+    // --- Setters called by UIController for each control ---
+    // Each setter: updates liveState_, applies to DSP object, sets dirty_ = true.
+    void setLoopLength(float v);
+    void setLoopPosition(float v);
+    void setStutterFraction(float v);
+    void setPlaybackSpeed(float v);
+    void setFreezeEnabled(bool v);
+    void setSampleGain(int pad, float v);
+    void setSampleStart(int pad, float v);
+    void setSampleEnd(int pad, float v);
+    void setObeyNoteOff(int pad, bool v);
+    void setInputLevel(float v);
+    void setSamplerLevel(float v);
+    void setParallelMode(bool v);
+
+private:
+    Preset      liveState_;
+    bool        dirty_ = false;
+    int         currentPreset_ = -1;
+
+    // References to the live DSP objects (injected via constructor).
+    SamplerBank& samplerBank_;
+    FreezeEffect& freezeEffect_;
+    Mixer&        mixer_;
+
+    void applyPresetToDsp(const Preset& p);
+    bool loadPresetFile(int n, Preset& out);
+    bool savePresetFile(int n, const Preset& p);
+};
+```
+
+---
+
+### Parameter Change Flow
+
+```
+loop()
+  └─ UIController reads pot/button
+       └─ PresetManager::setLoopLength(v)
+            ├─ liveState_.loopLength = v        (update saved state mirror)
+            ├─ dirty_ = true                    (flag unsaved changes)
+            └─ freezeEffect_.setLoopLength(v)   (apply to live DSP immediately)
+
+Audio ISR (I2S)
+  └─ freezeEffect_.processBlock(...)            (reads parameters atomically)
+       └─ no SD, no preset, no state knowledge
+```
+
+The audio ISR is completely unaware of the preset system. It only reads the DSP
+object state, which is kept up to date by the setters above. The `std::atomic<>`
+parameters already in `FreezeEffect` make this lock-free on the Cortex-M7.
+
+**Loading a preset:**
+```
+Button press → PresetManager::loadPreset(n)
+  ├─ mute audio output (write silence flag read by ISR)
+  ├─ read SONG_0N/preset.cfg from SD
+  ├─ for each pad: loadWavFromSD(bank, i, path)  ← may take ~100–500 ms
+  ├─ applyPresetToDsp(liveState_)               ← all DSP atomics updated
+  ├─ unmute audio
+  └─ dirty_ = false
+```
+
+**Saving a preset (hold SAVE ≥ 2 s):**
+```
+Button hold → PresetManager::savePreset(n)
+  ├─ write liveState_ → SONG_0N/preset.cfg on SD
+  └─ dirty_ = false
+```
+
+If you press load without saving, `dirty_` is discarded and the last-saved values
+are restored — the "compare" / "revert" behaviour.
+
+---
+
+### Key Constraints
+
+| Concern | Solution |
+|---|---|
+| WAV loading takes 100–500 ms | Mute audio (write silence) during `loadPreset()`; unmute when done |
+| SD writes during audio = glitches | Only call `savePreset()` from a timed button hold gesture, never from ISR |
+| PSRAM for 4 samples | 4 × 5 s × 48kHz × 4 bytes ≈ 3.8 MB. Fits in 8 MB PSRAM |
+| Missing WAV on SD | `loadWavFromSD` returns `false`; log to Serial, leave that pad silent |
+| Flash/EEPROM wear | Store presets on SD only — never EEPROM |
+| Preset count | SD can hold as many presets as space allows; no firmware change needed |
+
+---
+
+### Relationship to VST State Persistence
+
+The Teensy `PresetManager` is structurally identical to the VST's
+`getStateInformation` / `setStateInformation` implemented in
+`src/juce/PluginProcessor.cpp`:
+
+| Aspect | VST | Teensy |
+|---|---|---|
+| State container | APVTS XML in `MemoryBlock` | `Preset` struct in `.PRE` file on SD |
+| Sample paths | `samplePaths_[4]` stored in XML | `Preset::samplePaths[4][64]` |
+| Restore trigger | DAW project load | Preset-select button |
+| Save trigger | DAW project save (automatic) | Hold SAVE button ≥ 2 s |
+| Dirty tracking | DAW handles it | `PresetManager::dirty_` flag |
+| File I/O | `copyXmlToBinary` / `getXmlFromBinary` | `fwrite` / `fread` on SD |
+
+---
+
+## 12. Debugging Tips
 
 - Use `Serial.print()` for logging — but not inside the audio ISR (may cause glitches)
 - Monitor CPU load with Teensy Audio library's `AudioProcessorUsage()`

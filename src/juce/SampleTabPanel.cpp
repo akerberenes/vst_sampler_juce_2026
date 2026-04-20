@@ -23,20 +23,9 @@ SampleTabPanel::SampleTabPanel(PluginProcessor& processor)
         // Only the selected tab's components will be made visible by selectTab().
         addChildComponent(tabs_[i].waveform);
 
-        // When the user drags a marker, push the new fraction directly to the APVTS
-        // by calling setValueNotifyingHost(), which:
-        //   1. Updates the atomic<float> that processBlock reads.
-        //   2. Notifies the DAW automation system about the change.
-        //   3. Triggers any other listeners attached to that parameter.
-        tabs_[i].waveform.onRegionChanged = [this, i](float start, float end)
-        {
-            auto& apvts = processor_.getAPVTS();
-            auto si = juce::String(i);
-            if (auto* p = apvts.getParameter("sampleStart" + si))
-                p->setValueNotifyingHost(p->convertTo0to1(start));
-            if (auto* p = apvts.getParameter("sampleEnd" + si))
-                p->setValueNotifyingHost(p->convertTo0to1(end));
-        };
+        // The waveform display shows the active region visually.
+        // The region is now driven by the loop position / length sliders below,
+        // so the drag-marker callback is intentionally left unset.
 
         // --- Volume slider ---
         // This slider maps directly to the "sampleGainN" APVTS parameter.
@@ -47,9 +36,10 @@ SampleTabPanel::SampleTabPanel(PluginProcessor& processor)
         tabs_[i].volumeLabel.setText("Volume", juce::dontSendNotification);
         tabs_[i].volumeLabel.setFont(juce::Font(12.0f));
         tabs_[i].volumeLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+        tabs_[i].volumeLabel.setJustificationType(juce::Justification::centred);
         addChildComponent(tabs_[i].volumeSlider);
-        tabs_[i].volumeSlider.setSliderStyle(juce::Slider::LinearHorizontal);
-        tabs_[i].volumeSlider.setTextBoxStyle(juce::Slider::TextBoxRight, false, 45, 20);
+        tabs_[i].volumeSlider.setSliderStyle(juce::Slider::Rotary);
+        tabs_[i].volumeSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
         tabs_[i].gainAttachment = std::make_unique<SliderAttachment>(
             processor_.getAPVTS(), "sampleGain" + juce::String(i),
             tabs_[i].volumeSlider);
@@ -62,6 +52,47 @@ SampleTabPanel::SampleTabPanel(PluginProcessor& processor)
         tabs_[i].obeyAttachment = std::make_unique<ButtonAttachment>(
             processor_.getAPVTS(), "obeyNoteOff" + juce::String(i),
             tabs_[i].obeyNoteOffButton);
+
+        // --- Loop Position / Length sliders ---
+        // These replace the draggable waveform markers as the primary way to set
+        // the active playback region. Both are horizontal sliders (0.0–1.0).
+        // loopPos = where the window starts; loopLen = how long it is.
+        addChildComponent(tabs_[i].loopPosLabel);
+        tabs_[i].loopPosLabel.setText("Loop Pos", juce::dontSendNotification);
+        tabs_[i].loopPosLabel.setFont(juce::Font(12.0f));
+        tabs_[i].loopPosLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+        tabs_[i].loopPosLabel.setJustificationType(juce::Justification::centred);
+        addChildComponent(tabs_[i].loopPosSlider);
+        tabs_[i].loopPosSlider.setSliderStyle(juce::Slider::Rotary);
+        tabs_[i].loopPosSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+        tabs_[i].loopPosAttachment = std::make_unique<SliderAttachment>(
+            processor_.getAPVTS(), "sampleLoopPos" + juce::String(i),
+            tabs_[i].loopPosSlider);
+
+        addChildComponent(tabs_[i].loopLenLabel);
+        tabs_[i].loopLenLabel.setText("Loop Len", juce::dontSendNotification);
+        tabs_[i].loopLenLabel.setFont(juce::Font(12.0f));
+        tabs_[i].loopLenLabel.setColour(juce::Label::textColourId, juce::Colours::lightgrey);
+        tabs_[i].loopLenLabel.setJustificationType(juce::Justification::centred);
+        addChildComponent(tabs_[i].loopLenSlider);
+        tabs_[i].loopLenSlider.setSliderStyle(juce::Slider::Rotary);
+        tabs_[i].loopLenSlider.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 55, 18);
+        tabs_[i].loopLenAttachment = std::make_unique<SliderAttachment>(
+            processor_.getAPVTS(), "sampleLoopLen" + juce::String(i),
+            tabs_[i].loopLenSlider);
+
+        // When either slider changes, update the waveform display markers so the
+        // active region stays visually in sync with the knob values.
+        // SliderAttachment fires onValueChange for both user drags and DAW automation.
+        auto updateWaveformRegion = [this, i]()
+        {
+            float pos = (float)tabs_[i].loopPosSlider.getValue();
+            float len = (float)tabs_[i].loopLenSlider.getValue();
+            tabs_[i].waveform.setStartFraction(pos);
+            tabs_[i].waveform.setEndFraction(juce::jmin(1.0f, pos + len));
+        };
+        tabs_[i].loopPosSlider.onValueChange = updateWaveformRegion;
+        tabs_[i].loopLenSlider.onValueChange = updateWaveformRegion;
 
         // --- Load button ---
         addChildComponent(tabs_[i].loadButton);
@@ -89,12 +120,12 @@ SampleTabPanel::SampleTabPanel(PluginProcessor& processor)
         if (!wf.empty())
         {
             tabs_[i].waveform.setWaveform(wf);
-            // Restore marker positions from current APVTS values.
+            // Restore marker positions from current APVTS loop pos/len values.
             auto si = juce::String(i);
-            float ss = *processor_.getAPVTS().getRawParameterValue("sampleStart" + si);
-            float se = *processor_.getAPVTS().getRawParameterValue("sampleEnd" + si);
-            tabs_[i].waveform.setStartFraction(ss);
-            tabs_[i].waveform.setEndFraction(se);
+            float pos = *processor_.getAPVTS().getRawParameterValue("sampleLoopPos" + si);
+            float len = *processor_.getAPVTS().getRawParameterValue("sampleLoopLen" + si);
+            tabs_[i].waveform.setStartFraction(pos);
+            tabs_[i].waveform.setEndFraction(juce::jmin(1.0f, pos + len));
         }
     }
 
@@ -117,6 +148,10 @@ void SampleTabPanel::selectTab(int index)
         tabs_[i].nameLabel.setVisible(visible);
         tabs_[i].volumeLabel.setVisible(visible);
         tabs_[i].volumeSlider.setVisible(visible);
+        tabs_[i].loopPosLabel.setVisible(visible);
+        tabs_[i].loopPosSlider.setVisible(visible);
+        tabs_[i].loopLenLabel.setVisible(visible);
+        tabs_[i].loopLenSlider.setVisible(visible);
     }
 
     updateTabAppearance();  // Highlight the active tab button.
@@ -180,17 +215,28 @@ void SampleTabPanel::resized()
     tabs_[i].loadButton.setBounds(pad + cw - 130, cy, 130, rowH);
     cy += rowH + pad;
 
-    // Row 2: Waveform display (takes the bulk of the available height)
-    // Reduced by one extra row (rowH + pad) to make room for the volume slider row.
-    int wfH = ch - rowH * 3 - pad * 5;
+    // Row 2: Waveform display (takes the bulk of the available height).
+    // Below it: one row of 3 knobs (loop pos, loop len, volume) + obey-note-off.
+    int labelH = 14;
+    int knobSz = 70;  // Square bounds for each rotary (arc + text box inside).
+    int knobRowH = labelH + knobSz;
+    int wfH = ch - knobRowH - rowH - pad * 4;
     tabs_[i].waveform.setBounds(pad, cy, cw, wfH);
     cy += wfH + pad;
 
-    // Row 3: Volume slider
-    // The label sits to the left; the slider takes the remaining width.
-    tabs_[i].volumeLabel.setBounds(pad, cy, 55, rowH);
-    tabs_[i].volumeSlider.setBounds(pad + 55, cy, cw - 55, rowH);
-    cy += rowH + pad;
+    // Row 3: three rotary knobs side by side — Loop Pos | Loop Len | Volume
+    int knobGap = 8;
+    int cellW   = (cw - knobGap * 2) / 3;
+    int col1X   = pad + cellW + knobGap;
+    int col2X   = pad + (cellW + knobGap) * 2;
+
+    tabs_[i].loopPosLabel.setBounds (pad,   cy,          cellW, labelH);
+    tabs_[i].loopPosSlider.setBounds(pad,   cy + labelH, cellW, knobSz);
+    tabs_[i].loopLenLabel.setBounds (col1X, cy,          cellW, labelH);
+    tabs_[i].loopLenSlider.setBounds(col1X, cy + labelH, cellW, knobSz);
+    tabs_[i].volumeLabel.setBounds  (col2X, cy,          cellW, labelH);
+    tabs_[i].volumeSlider.setBounds (col2X, cy + labelH, cellW, knobSz);
+    cy += knobRowH + pad;
 
     // Row 4: Obey Note Off toggle
     tabs_[i].obeyNoteOffButton.setBounds(pad, cy, 160, rowH);
@@ -210,17 +256,16 @@ void SampleTabPanel::sampleLoaded(int index)
     tabs_[index].nameLabel.setText(name.isEmpty() ? "(no sample)" : name,
                                     juce::dontSendNotification);
 
-    // Reset markers to full range (0.0 - 1.0) for the new sample.
+    // Reset loop markers: full range (position=0, length=1) for the new sample.
     tabs_[index].waveform.setStartFraction(0.0f);
     tabs_[index].waveform.setEndFraction(1.0f);
 
     // Push the reset values to the APVTS so processBlock picks them up immediately.
-    // convertTo0to1(1.0) returns 1.0 (normalised range for a 0-1 parameter).
     auto si = juce::String(index);
     auto& apvts = processor_.getAPVTS();
-    if (auto* p = apvts.getParameter("sampleStart" + si))
+    if (auto* p = apvts.getParameter("sampleLoopPos" + si))
         p->setValueNotifyingHost(0.0f);
-    if (auto* p = apvts.getParameter("sampleEnd" + si))
+    if (auto* p = apvts.getParameter("sampleLoopLen" + si))
         p->setValueNotifyingHost(1.0f);
 }
 

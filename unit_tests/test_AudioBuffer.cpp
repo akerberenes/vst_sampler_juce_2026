@@ -1,6 +1,8 @@
 #include <catch2/catch.hpp>
 #include "AudioBuffer.h"
 
+using namespace Catch;
+
 TEST_CASE("AudioBuffer allocation", "[AudioBuffer]")
 {
     SECTION("Default constructor")
@@ -75,33 +77,5 @@ TEST_CASE("AudioBuffer data operations", "[AudioBuffer]")
         const float* readCh0 = buf.getReadPointer(0);
         REQUIRE(readCh0[0] == Approx(0.0f));
         REQUIRE(readCh0[1] == Approx(0.0f));
-    }
-}
-
-TEST_CASE("AudioBuffer array of pointers", "[AudioBuffer]")
-{
-    AudioBuffer buf(3, 64);
-    
-    SECTION("Get array of write pointers")
-    {
-        float** pointers = buf.getArrayOfWritePointers();
-        REQUIRE(pointers != nullptr);
-        pointers[0][0] = 0.1f;
-        pointers[1][5] = 0.2f;
-        pointers[2][10] = 0.3f;
-        
-        REQUIRE(buf.getReadPointer(0)[0] == Approx(0.1f));
-        REQUIRE(buf.getReadPointer(1)[5] == Approx(0.2f));
-        REQUIRE(buf.getReadPointer(2)[10] == Approx(0.3f));
-    }
-    
-    SECTION("Get array of read pointers")
-    {
-        float* ch0 = buf.getWritePointer(0);
-        ch0[0] = 0.42f;
-        
-        const float* const* readPointers = buf.getArrayOfReadPointers();
-        REQUIRE(readPointers != nullptr);
-        REQUIRE(readPointers[0][0] == Approx(0.42f));
     }
 }

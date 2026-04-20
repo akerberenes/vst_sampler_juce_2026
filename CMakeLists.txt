@@ -49,6 +49,7 @@ target_sources(SamplerWithFreeze PRIVATE
     src/juce/PluginEditor.cpp
     src/juce/WaveformDisplay.cpp
     src/juce/SampleTabPanel.cpp
+    src/juce/FreezeBufferDisplay.cpp
 )
 
 target_compile_features(SamplerWithFreeze PRIVATE cxx_std_17)

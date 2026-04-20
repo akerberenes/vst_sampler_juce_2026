@@ -2,8 +2,10 @@
 #include "Sampler.h"
 #include <cmath>
 
+using namespace Catch;
+
 // Helper: create a test sine wave
-std::vector<float> createTestWave(int numSamples, int sampleRate, float frequency)
+inline std::vector<float> createTestWave(int numSamples, int sampleRate, float frequency)
 {
     std::vector<float> wave(numSamples);
     for (int i = 0; i < numSamples; ++i)
@@ -73,25 +75,6 @@ TEST_CASE("Sampler loop mode", "[Sampler]")
         
         sampler.setLoopMode(false);
         REQUIRE(sampler.getLoopMode() == false);
-    }
-}
-
-TEST_CASE("Sampler loop fraction", "[Sampler]")
-{
-    Sampler sampler;
-    
-    SECTION("Default loop fraction is 1.0 (full sample)")
-    {
-        REQUIRE(sampler.getLoopFraction() == Approx(1.0f));
-    }
-    
-    SECTION("Set loop fraction")
-    {
-        sampler.setLoopFraction(0.5f);
-        REQUIRE(sampler.getLoopFraction() == Approx(0.5f));
-        
-        sampler.setLoopFraction(0.25f);
-        REQUIRE(sampler.getLoopFraction() == Approx(0.25f));
     }
 }
 

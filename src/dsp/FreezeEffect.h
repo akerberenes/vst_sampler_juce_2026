@@ -1,7 +1,6 @@
 #pragma once
 
 #include "CircularBuffer.h"
-#include <atomic>
 
 /**
  * FreezeEffect
@@ -14,19 +13,17 @@
  *   - On "freeze": stops writing, loops the captured content indefinitely (Frozen state).
  *   - Stutter: on each beat subdivision, jumps the read pointer back rhythmically.
  *   - Speed: scales how fast the read pointer advances (pitch shift).
- *   - Dry/wet: blends the original (dry) signal with the frozen (wet) signal.
  *
  * --- Stutter mechanism ---
  * The stutter is driven by a simple sample accumulator:
  *   stutterAccumulator_ += blockSize every processBlock call.
  *   When accumulator >= stutterSamples (derived from BPM + stutterFraction),
- *   the read pointer is jumped forward by stutterFraction of the loop region.
+ *   the read pointer is reset to the loop start position (retrigger).
  *   This creates a rhythmic "stutter" aligned to the project tempo.
  *
- * --- Dry/wet crossfade ---
- *   dryWet = 0.0  → 100% dry (no effect audible)
- *   dryWet = 1.0  → 100% wet (fully frozen audio, no original signal)
- *   In between: linear blend.
+ * --- Output behaviour ---
+ * When frozen, the output is always 100% wet (only the frozen loop is heard).
+ * The dry signal is never mixed in during frozen state.
  *
  * --- Recording mode behaviour ---
  * Even when not frozen, FreezeEffect passes audio through unchanged (dry output).
@@ -85,11 +82,12 @@ public:
     // --- Stutter ---
 
     // Set the stutter interval as a fraction of one beat.
-    // 1.0   = jump once per beat  (slowest stutter)
-    // 0.5   = jump twice per beat
+    // 1.0   = retrigger once per beat  (slowest stutter)
+    // 0.5   = retrigger twice per beat
     // 0.25  = four times per beat
     // 0.125 = eight times per beat (default — tight stutter)
     // 0.0625= sixteen times per beat (fastest stutter)
+    // On each retrigger, the read pointer resets to the loop start position.
     void setStutterFraction(double beatFraction) { stutterFraction_ = beatFraction; }
     double getStutterFraction() const { return stutterFraction_; }
 
@@ -100,30 +98,33 @@ public:
     void setPlaybackSpeed(float speed) { freezeBuffer_.setPlaybackSpeed(speed); }
     float getPlaybackSpeed() const { return freezeBuffer_.getPlaybackSpeed(); }
 
-    // --- Loop boundaries ---
+    // --- Loop length and position ---
 
-    // Set the start/end of the frozen loop as a fraction of the buffer (0.0–1.0).
-    // Narrowing the window creates shorter loop patterns.
-    void setLoopStart(float fraction) { freezeBuffer_.setLoopStart(fraction); }
-    void setLoopEnd(float fraction)   { freezeBuffer_.setLoopEnd(fraction); }
-    float getLoopStart() const        { return freezeBuffer_.getLoopStart(); }
-    float getLoopEnd()   const        { return freezeBuffer_.getLoopEnd(); }
-
-    // --- Dry/wet mix ---
-
-    // 0.0 = fully dry (original audio, no freeze audible).
-    // 1.0 = fully wet (only the frozen loop is heard).
-    void setDryWetMix(float wet);  // Clamped to [0.0, 1.0]
-    float getDryWetMix() const { return dryWetMix_.load(); }
+    // loopLength: fraction of the buffer used as the loop window (0.0–1.0).
+    //   1.0 = full buffer (default); 0.5 = half the buffer; etc.
+    // loopPosition: shifts the start (and end) of the window within the buffer (0.0–1.0).
+    //   0.0 = window starts at the beginning of the buffer (default).
+    //   The actual start is clamped so the window never exceeds the buffer end.
+    //   Actual start = clamp(loopPosition, 0.0, 1.0 - loopLength)
+    //   Actual end   = start + loopLength
+    void setLoopLength(float length);
+    void setLoopPosition(float position);
+    float getLoopLength()   const { return loopLength_; }
+    float getLoopPosition() const { return loopPosition_; }
 
     // --- Debug ---
+
+    // Copy the raw ring buffer content into `out` for visualisation (e.g. waveform display).
+    // This is a best-effort snapshot — no lock is taken, so occasional tearing is possible,
+    // which is acceptable for display purposes.
+    void copyBufferSnapshot(std::vector<float>& out) const;
 
     // Returns the read pointer's current position in the buffer as a percentage (0–100%).
     // Useful for visualising how full the buffer is.
     float getBufferFillPercentage() const;
 
     // Returns the current state (Recording or Frozen).
-    State getState() const { return static_cast<State>(state_.load()); }
+    State getState() const { return isFrozen() ? State::Frozen : State::Recording; }
 
 private:
     // The underlying ring buffer that captures and replays audio.
@@ -132,12 +133,9 @@ private:
     // Sample rate in Hz, set by prepare().
     int sampleRate_ = 48000;
 
-    // Current state (Recording or Frozen). Redundant with freezeBuffer_.isFrozen()
-    // but kept for fast state queries without going through the buffer.
-    std::atomic<uint8_t> state_{static_cast<uint8_t>(State::Recording)};
-
-    // Dry/wet blend factor (0.0 = dry, 1.0 = wet). Atomic for UI-thread safety.
-    std::atomic<float> dryWetMix_{1.0f};
+    // Loop window parameters. Actual start/end pushed to freezeBuffer_ whenever either changes.
+    float loopLength_   = 1.0f;   // fraction of the buffer used as the loop window
+    float loopPosition_ = 0.0f;   // requested start of the window as a fraction of the buffer
 
     // Stutter interval as a fraction of a beat (e.g. 0.125 = 1/8 beat).
     double stutterFraction_ = 0.125;
@@ -148,4 +146,8 @@ private:
     // Calculate when the next stutter jump should occur and execute it if due.
     // Called once per processBlock when the buffer is frozen.
     void updateStutterPlayback(double tempoInBPM, int blockSize);
+
+    // Recomputes the actual loop start/end from loopLength_/loopPosition_ and
+    // pushes them to the underlying CircularBuffer.
+    void applyLoopBounds();
 };

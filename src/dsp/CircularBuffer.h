@@ -2,7 +2,6 @@
 
 #include <vector>
 #include <atomic>
-#include <cstring>
 
 /**
  * CircularBuffer
@@ -118,11 +117,6 @@ public:
 
     // Returns current read position as a fraction of total buffer size (0.0–1.0).
     float getReadPosition() const;
-
-    // Advance the read pointer forward by `fraction` of the current loop region.
-    // Called by FreezeEffect on each stutter interval to create the rhythmic jump.
-    // Example: fraction=0.25, loopSize=48000 → jump forward 12000 samples.
-    void jumpReadPointerByFraction(float fraction);
 
     // --- Info ---
     int getSize() const { return buffer_.size(); }

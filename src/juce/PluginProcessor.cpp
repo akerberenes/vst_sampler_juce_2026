@@ -87,9 +87,8 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     bool  frozen      = *parameters_.getRawParameterValue("freeze")      > 0.5f;
     int   stutterIdx  = (int)*parameters_.getRawParameterValue("stutterRate");
     float speed       = *parameters_.getRawParameterValue("speed");
-    float dryWet      = *parameters_.getRawParameterValue("dryWet");
-    float loopStart   = *parameters_.getRawParameterValue("loopStart");
-    float loopEnd     = *parameters_.getRawParameterValue("loopEnd");
+    float loopLength  = *parameters_.getRawParameterValue("loopLength");
+    float loopPos     = *parameters_.getRawParameterValue("loopPosition");
     bool  parallel    = *parameters_.getRawParameterValue("parallelMode")  > 0.5f;
     float inputLevel  = *parameters_.getRawParameterValue("inputLevel");
     float samplerLevel= *parameters_.getRawParameterValue("samplerLevel");
@@ -98,9 +97,8 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     freezeEffect_.setFrozen(frozen);
     freezeEffect_.setStutterFraction(kStutterValues[stutterIdx]);  // Index into lookup table.
     freezeEffect_.setPlaybackSpeed(speed);
-    freezeEffect_.setDryWetMix(dryWet);
-    freezeEffect_.setLoopStart(loopStart);
-    freezeEffect_.setLoopEnd(loopEnd);
+    freezeEffect_.setLoopLength(loopLength);
+    freezeEffect_.setLoopPosition(loopPos);
     mixer_.setMode(parallel ? Mixer::Mode::Parallel : Mixer::Mode::Sequential);
     mixer_.setInputLevel(inputLevel);
     mixer_.setSamplerLevel(samplerLevel);
@@ -111,8 +109,11 @@ void PluginProcessor::processBlock(juce::AudioBuffer<float>& buffer, juce::MidiB
     for (int i = 0; i < 4; ++i)
     {
         auto si = juce::String(i);
-        float ss = *parameters_.getRawParameterValue("sampleStart" + si);
-        float se = *parameters_.getRawParameterValue("sampleEnd" + si);
+        float loopPos = *parameters_.getRawParameterValue("sampleLoopPos" + si);
+        float loopLen = *parameters_.getRawParameterValue("sampleLoopLen" + si);
+        // Convert loop position + length to start/end fractions (clamped to [0, 1]).
+        float ss = loopPos;
+        float se = std::min(1.0f, loopPos + loopLen);
         // Per-pad output volume (0.0–2.0). Read each block so the UI slider responds
         // in real time without needing a separate listener.
         float sg = *parameters_.getRawParameterValue("sampleGain" + si);
@@ -183,20 +184,46 @@ const juce::String PluginProcessor::getName() const
 
 void PluginProcessor::getStateInformation(juce::MemoryBlock& destData)
 {
-    // TODO: serialise APVTS state here so the DAW can save/restore the plugin.
-    // Example implementation:
-    //   auto state = parameters_.copyState();
-    //   std::unique_ptr<juce::XmlElement> xml(state.createXml());
-    //   copyXmlToBinary(*xml, destData);
+    // Serialise APVTS parameters into XML.
+    auto state = parameters_.copyState();
+    std::unique_ptr<juce::XmlElement> xml(state.createXml());
+
+    // Append sample file paths as child elements so they survive save/restore.
+    for (int i = 0; i < 4; ++i)
+    {
+        if (samplePaths_[i].isNotEmpty())
+        {
+            auto* sampleEl = xml->createNewChildElement("SamplePath");
+            sampleEl->setAttribute("index", i);
+            sampleEl->setAttribute("path", samplePaths_[i]);
+        }
+    }
+
+    copyXmlToBinary(*xml, destData);
 }
 
 void PluginProcessor::setStateInformation(const void* data, int sizeInBytes)
 {
-    // TODO: deserialise and restore APVTS state from `data`.
-    // Example implementation:
-    //   std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
-    //   if (xmlState != nullptr)
-    //       parameters_.replaceState(juce::ValueTree::fromXml(*xmlState));
+    std::unique_ptr<juce::XmlElement> xmlState(getXmlFromBinary(data, sizeInBytes));
+    if (xmlState == nullptr)
+        return;
+
+    // Restore APVTS parameters.
+    if (xmlState->hasTagName(parameters_.state.getType()))
+        parameters_.replaceState(juce::ValueTree::fromXml(*xmlState));
+
+    // Reload sample files from stored paths.
+    for (auto* child : xmlState->getChildWithTagNameIterator("SamplePath"))
+    {
+        int index = child->getIntAttribute("index", -1);
+        juce::String path = child->getStringAttribute("path");
+        if (index >= 0 && index < 4 && path.isNotEmpty())
+        {
+            juce::File file(path);
+            if (file.existsAsFile())
+                loadSample(index, file);
+        }
+    }
 }
 
 double PluginProcessor::getTempo() const
@@ -252,6 +279,22 @@ void PluginProcessor::handleMidiNoteOff(const juce::MidiMessage& msg)
         samplerBank_.getSample(idx).stop();
 }
 
+void PluginProcessor::triggerPad(int index)
+{
+    if (index >= 0 && index < 4)
+        samplerBank_.triggerSample(index, 4.0, getTempo());
+}
+
+void PluginProcessor::stopPad(int index)
+{
+    if (index < 0 || index >= 4)
+        return;
+    juce::String paramId = "obeyNoteOff" + juce::String(index);
+    bool obey = *parameters_.getRawParameterValue(paramId) > 0.5f;
+    if (obey)
+        samplerBank_.getSample(index).stop();
+}
+
 void PluginProcessor::loadSample(int index, const juce::File& file)
 {
     if (index < 0 || index >= 4)
@@ -275,6 +318,7 @@ void PluginProcessor::loadSample(int index, const juce::File& file)
     // Multi-channel files are silently downmixed to mono here.
     samplerBank_.loadSampleData(index, tempBuffer.getReadPointer(0), numSamples);
     sampleNames_[index] = file.getFileNameWithoutExtension();
+    samplePaths_[index] = file.getFullPathName();
 
     // Copy channel 0 into our own vector for the WaveformDisplay UI component.
     // The UI reads this on the main thread; processBlock never reads sampleWaveforms_.
@@ -326,18 +370,17 @@ juce::AudioProcessorValueTreeState::ParameterLayout PluginProcessor::createParam
         juce::ParameterID{"speed", 1}, "Speed",
         juce::NormalisableRange<float>(0.25f, 4.0f, 0.01f, 0.5f), 1.0f));
 
-    // Dry/wet crossfade: 0.0 = dry only, 1.0 = wet (frozen) only.
+    // Loop length: fraction of the freeze buffer used as the loop window (0.0–1.0).
+    // 1.0 = full buffer (default); reducing this shrinks the loop region.
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID{"dryWet", 1}, "Dry/Wet",
+        juce::ParameterID{"loopLength", 1}, "Loop Length",
         juce::NormalisableRange<float>(0.0f, 1.0f), 1.0f));
 
-    // Loop start/end within the freeze buffer (fraction 0.0-1.0).
+    // Loop position: shifts the start (and end) of the window within the buffer (0.0–1.0).
+    // Clamped so the window never exceeds the buffer end given the current loop length.
     params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID{"loopStart", 1}, "Loop Start",
+        juce::ParameterID{"loopPosition", 1}, "Loop Position",
         juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f));
-    params.push_back(std::make_unique<juce::AudioParameterFloat>(
-        juce::ParameterID{"loopEnd", 1}, "Loop End",
-        juce::NormalisableRange<float>(0.0f, 1.0f), 1.0f));
 
     // --- Per-sample controls (4 pads × 3 parameters each) ---
     for (int i = 0; i < 4; ++i)
@@ -349,14 +392,16 @@ juce::AudioProcessorValueTreeState::ParameterLayout PluginProcessor::createParam
             juce::ParameterID{"obeyNoteOff" + si, 1},
             "Obey Note Off " + juce::String(i + 1), false));
 
-        // Waveform start/end marker positions for pad i (fraction 0.0-1.0).
+        // Per-pad loop window: position and length (fraction 0.0-1.0).
+        // loopPosition: start of the active window within the loaded sample.
+        // loopLength:   size of the active window (1.0 = full sample, default).
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{"sampleStart" + si, 1},
-            "Sample Start " + juce::String(i + 1),
+            juce::ParameterID{"sampleLoopPos" + si, 1},
+            "Loop Position " + juce::String(i + 1),
             juce::NormalisableRange<float>(0.0f, 1.0f), 0.0f));
         params.push_back(std::make_unique<juce::AudioParameterFloat>(
-            juce::ParameterID{"sampleEnd" + si, 1},
-            "Sample End " + juce::String(i + 1),
+            juce::ParameterID{"sampleLoopLen" + si, 1},
+            "Loop Length " + juce::String(i + 1),
             juce::NormalisableRange<float>(0.0f, 1.0f), 1.0f));
 
         // Per-pad output volume. 0.0 = silence, 1.0 = unity gain, 2.0 = +6 dB.

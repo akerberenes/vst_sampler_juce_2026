@@ -43,19 +43,3 @@ const float* AudioBuffer::getReadPointer(int channel) const
         return nullptr;
     return writePointers_[channel];
 }
-
-float** AudioBuffer::getArrayOfWritePointers()
-{
-    // Returns a pointer to the first element of writePointers_.
-    // The caller receives a float** which they can index as pointers[ch][frame].
-    return writePointers_.data();
-}
-
-const float* const* AudioBuffer::getArrayOfReadPointers() const
-{
-    // writePointers_ stores float*, but we want const float* const* here.
-    // The cast only changes the pointer types — it does NOT discard const on the
-    // data pointed to. This is safe because the returned pointers are const float*,
-    // so the caller cannot modify the floats through them.
-    return const_cast<const float* const*>(writePointers_.data());
-}

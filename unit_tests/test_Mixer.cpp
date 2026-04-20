@@ -2,6 +2,8 @@
 #include "Mixer.h"
 #include <cmath>
 
+using namespace Catch;
+
 TEST_CASE("Mixer mode initialization", "[Mixer]")
 {
     Mixer mixer;

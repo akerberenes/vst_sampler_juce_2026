@@ -7,10 +7,11 @@ PluginEditor::PluginEditor(PluginProcessor& processor)
     : AudioProcessorEditor(&processor), processor_(processor),
       // SampleTabPanel is constructed here (before the body of the constructor),
       // so it receives a valid processor reference from the start.
-      sampleTabPanel_(processor)
+      sampleTabPanel_(processor),
+      freezeBufferDisplay_(processor)
 {
     // Set the fixed window size. Users can't resize this window.
-    setSize(750, 500);
+    setSize(750, 550);
 
     // --- Title label ---
     addAndMakeVisible(titleLabel_);
@@ -22,6 +23,9 @@ PluginEditor::PluginEditor(PluginProcessor& processor)
     // Contains all per-pad UI: waveform, markers, load button, obey-note-off toggle.
     addAndMakeVisible(sampleTabPanel_);
 
+    // --- Freeze buffer waveform display ---
+    addAndMakeVisible(freezeBufferDisplay_);
+
     // --- Freeze toggle button ---
     // ButtonAttachment wires the ToggleButton to the "freeze" AudioParameterBool.
     // When the user clicks, the attachment calls parameter->setValue(); when the
@@ -31,56 +35,50 @@ PluginEditor::PluginEditor(PluginProcessor& processor)
     freezeAttachment_ = std::make_unique<ButtonAttachment>(
         processor_.getAPVTS(), "freeze", freezeButton_);
 
-    // --- Stutter rate combo box ---
-    // ComboBoxAttachment maps item indices to the "stutterRate" AudioParameterChoice.
-    // The item list here must match the StringArray in createParameterLayout().
+    // --- Stutter rate knob ---
+    // Rotary slider with 7 discrete snap positions (0–6) mapping to kStutterValues[].
     addAndMakeVisible(stutterLabel_);
     stutterLabel_.setText("Stutter", juce::dontSendNotification);
-    addAndMakeVisible(stutterRateBox_);
-    stutterRateBox_.addItemList(
-        {"1 beat", "1/2 beat", "1/4 beat", "1/8 beat", "1/16 beat", "1/32 beat", "1/64 beat"}, 1);
-    stutterAttachment_ = std::make_unique<ComboBoxAttachment>(
-        processor_.getAPVTS(), "stutterRate", stutterRateBox_);
+    stutterLabel_.setJustificationType(juce::Justification::centred);
+    addAndMakeVisible(stutterKnob_);
+    stutterKnob_.setSliderStyle(juce::Slider::Rotary);
+    stutterKnob_.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 18);
+    stutterKnob_.textFromValueFunction = [](double v) -> juce::String {
+        static const char* labels[] = { "1", "1/2", "1/4", "1/8", "1/16", "1/32", "1/64" };
+        return labels[juce::jlimit(0, 6, (int)v)];
+    };
+    stutterAttachment_ = std::make_unique<SliderAttachment>(
+        processor_.getAPVTS(), "stutterRate", stutterKnob_);
 
-    // --- Speed slider ---
-    // SliderAttachment maps the slider position to the "speed" AudioParameterFloat.
-    // The NormalisableRange in createParameterLayout defines how the slider value
-    // maps to a physical BPM multiplier (0.25x to 4x with skew toward 1x).
+    // --- Speed knob ---
     addAndMakeVisible(speedLabel_);
     speedLabel_.setText("Speed", juce::dontSendNotification);
+    speedLabel_.setJustificationType(juce::Justification::centred);
     addAndMakeVisible(speedSlider_);
-    speedSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
-    speedSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
+    speedSlider_.setSliderStyle(juce::Slider::Rotary);
+    speedSlider_.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 18);
     speedAttachment_ = std::make_unique<SliderAttachment>(
         processor_.getAPVTS(), "speed", speedSlider_);
 
-    // --- Dry/wet slider ---
-    addAndMakeVisible(dryWetLabel_);
-    dryWetLabel_.setText("Dry/Wet", juce::dontSendNotification);
-    addAndMakeVisible(dryWetSlider_);
-    dryWetSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
-    dryWetSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
-    dryWetAttachment_ = std::make_unique<SliderAttachment>(
-        processor_.getAPVTS(), "dryWet", dryWetSlider_);
+    // --- Loop length knob ---
+    addAndMakeVisible(loopLengthLabel_);
+    loopLengthLabel_.setText("Loop Len", juce::dontSendNotification);
+    loopLengthLabel_.setJustificationType(juce::Justification::centred);
+    addAndMakeVisible(loopLengthSlider_);
+    loopLengthSlider_.setSliderStyle(juce::Slider::Rotary);
+    loopLengthSlider_.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 18);
+    loopLengthAttachment_ = std::make_unique<SliderAttachment>(
+        processor_.getAPVTS(), "loopLength", loopLengthSlider_);
 
-    // --- Loop start slider ---
-    // Controls where in the freeze buffer the loop region begins.
-    addAndMakeVisible(loopStartLabel_);
-    loopStartLabel_.setText("Loop Start", juce::dontSendNotification);
-    addAndMakeVisible(loopStartSlider_);
-    loopStartSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
-    loopStartSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
-    loopStartAttachment_ = std::make_unique<SliderAttachment>(
-        processor_.getAPVTS(), "loopStart", loopStartSlider_);
-
-    // --- Loop end slider ---
-    addAndMakeVisible(loopEndLabel_);
-    loopEndLabel_.setText("Loop End", juce::dontSendNotification);
-    addAndMakeVisible(loopEndSlider_);
-    loopEndSlider_.setSliderStyle(juce::Slider::LinearHorizontal);
-    loopEndSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
-    loopEndAttachment_ = std::make_unique<SliderAttachment>(
-        processor_.getAPVTS(), "loopEnd", loopEndSlider_);
+    // --- Loop position knob ---
+    addAndMakeVisible(loopPositionLabel_);
+    loopPositionLabel_.setText("Loop Pos", juce::dontSendNotification);
+    loopPositionLabel_.setJustificationType(juce::Justification::centred);
+    addAndMakeVisible(loopPositionSlider_);
+    loopPositionSlider_.setSliderStyle(juce::Slider::Rotary);
+    loopPositionSlider_.setTextBoxStyle(juce::Slider::TextBoxBelow, false, 60, 18);
+    loopPositionAttachment_ = std::make_unique<SliderAttachment>(
+        processor_.getAPVTS(), "loopPosition", loopPositionSlider_);
 
     // --- Parallel mode toggle ---
     // Switches the Mixer between Sequential (input+sampler -> freeze) and
@@ -107,6 +105,32 @@ PluginEditor::PluginEditor(PluginProcessor& processor)
     samplerLevelSlider_.setTextBoxStyle(juce::Slider::TextBoxRight, false, 50, 20);
     samplerLevelAttachment_ = std::make_unique<SliderAttachment>(
         processor_.getAPVTS(), "samplerLevel", samplerLevelSlider_);
+
+    // --- Pad buttons ---
+    // Each pad triggers on mouse-down and stops on mouse-up (if obeyNoteOff).
+    // Also switches the sample tab panel to the corresponding tab.
+    const char* padLabels[4] = { "PAD 1", "PAD 2", "PAD 3", "PAD 4" };
+    for (int i = 0; i < 4; ++i)
+    {
+        addAndMakeVisible(padButtons_[i]);
+        padButtons_[i].setButtonText(padLabels[i]);
+        padButtons_[i].setColour(juce::TextButton::buttonColourId, juce::Colour(0xff3a3a5a));
+
+        // Trigger on press (not release) and switch tab.
+        // Stop on release if obeyNoteOff is active for this pad.
+        padButtons_[i].onStateChange = [this, i]
+        {
+            if (padButtons_[i].isDown())
+            {
+                processor_.triggerPad(i);
+                sampleTabPanel_.selectTab(i);
+            }
+            else
+            {
+                processor_.stopPad(i);
+            }
+        };
+    }
 }
 
 PluginEditor::~PluginEditor()
@@ -122,8 +146,9 @@ void PluginEditor::paint(juce::Graphics& g)
     g.fillAll(juce::Colour(0xff2a2a2a));
 
     int titleH = 40;   // Height of the title bar.
-    int mixerH = 90;   // Height of the mixer strip at the bottom.
-    int mainH  = getHeight() - titleH - mixerH;  // Height of the main middle section.
+    int padsH  = 50;   // Height of the pad buttons section at the very bottom.
+    int mixerH = 90;   // Height of the mixer strip.
+    int mainH  = getHeight() - titleH - mixerH - padsH;  // Height of the main middle section.
     int leftW  = 400;  // Width of the SampleTabPanel column.
 
     // --- Section divider lines ---
@@ -131,20 +156,23 @@ void PluginEditor::paint(juce::Graphics& g)
     g.drawLine(0,      (float)titleH,          (float)getWidth(), (float)titleH);           // Below title.
     g.drawLine((float)leftW, (float)titleH,    (float)leftW,      (float)(titleH + mainH)); // Between panels.
     g.drawLine(0,      (float)(titleH + mainH),(float)getWidth(), (float)(titleH + mainH)); // Above mixer.
+    g.drawLine(0,      (float)(titleH + mainH + mixerH), (float)getWidth(), (float)(titleH + mainH + mixerH)); // Above pads.
 
     // --- Section header labels (painted directly, not as JUCE Label components) ---
     g.setColour(juce::Colours::grey);
     g.setFont(12.0f);
     g.drawText("FREEZE EFFECT", leftW + 10, titleH + 4, 200, 16, juce::Justification::centredLeft);
     g.drawText("MIXER",         10,          titleH + mainH + 4, 200, 16, juce::Justification::centredLeft);
+    g.drawText("PADS",          10,          titleH + mainH + mixerH + 4, 200, 16, juce::Justification::centredLeft);
 }
 
 void PluginEditor::resized()
 {
     // All measurements match the layout diagram in the class comment.
     int titleH = 40;
+    int padsH  = 50;
     int mixerH = 90;
-    int mainH  = getHeight() - titleH - mixerH;
+    int mainH  = getHeight() - titleH - mixerH - padsH;
     int leftW  = 400;
     int pad    = 10;
     int rowH   = 28;
@@ -156,37 +184,43 @@ void PluginEditor::resized()
     sampleTabPanel_.setBounds(0, titleH, leftW, mainH);
 
     // --- Freeze controls (right column) ---
-    // fx/fy: origin of the right-column content
-    // fx+labelW: where the controls start (after the label)
-    // sw: control width (right column minus label minus margins)
+    // fx/fy: origin of the right-column content.
     int fx     = leftW + pad;
     int fw     = getWidth() - leftW - pad * 2;  // Total right column width.
-    int labelW = 75;
-    int sx     = fx + labelW;  // X where the slider/combo starts.
-    int sw     = fw - labelW;  // Width of the slider/combo.
     int fy     = titleH + 24;  // A bit below the "FREEZE EFFECT" header text.
 
     freezeButton_.setBounds(fx, fy, fw, rowH);
     fy += rowH + 8;
 
-    stutterLabel_.setBounds(fx, fy, labelW, rowH);
-    stutterRateBox_.setBounds(sx, fy, sw, rowH);
-    fy += rowH + 4;
+    // --- 2×2 knob grid: Stutter | Speed  (top row)
+    //                       LoopLen | LoopPos (bottom row) ---
+    // Each cell: centred label (labelH) above a square rotary knob (knobSz).
+    // cellW = half the column width minus the inter-column gap.
+    int gap    = 8;
+    int labelH = 16;
+    int knobSz = 80;   // Rotary bounds are square; text box is inside this height.
+    int cellW  = (fw - gap) / 2;
+    int col1X  = fx + cellW + gap;
 
-    speedLabel_.setBounds(fx, fy, labelW, rowH);
-    speedSlider_.setBounds(sx, fy, sw, rowH);
-    fy += rowH + 4;
+    // Row 0 ---------------------------------------------------------------
+    stutterLabel_.setBounds    (fx,    fy,          cellW, labelH);
+    stutterKnob_.setBounds     (fx,    fy + labelH, cellW, knobSz);
+    speedLabel_.setBounds      (col1X, fy,          cellW, labelH);
+    speedSlider_.setBounds     (col1X, fy + labelH, cellW, knobSz);
+    fy += labelH + knobSz + gap;
 
-    dryWetLabel_.setBounds(fx, fy, labelW, rowH);
-    dryWetSlider_.setBounds(sx, fy, sw, rowH);
-    fy += rowH + 4;
+    // Row 1 ---------------------------------------------------------------
+    loopLengthLabel_.setBounds (fx,    fy,          cellW, labelH);
+    loopLengthSlider_.setBounds(fx,    fy + labelH, cellW, knobSz);
+    loopPositionLabel_.setBounds (col1X, fy,          cellW, labelH);
+    loopPositionSlider_.setBounds(col1X, fy + labelH, cellW, knobSz);
+    fy += labelH + knobSz + gap;
 
-    loopStartLabel_.setBounds(fx, fy, labelW, rowH);
-    loopStartSlider_.setBounds(sx, fy, sw, rowH);
-    fy += rowH + 4;
-
-    loopEndLabel_.setBounds(fx, fy, labelW, rowH);
-    loopEndSlider_.setBounds(sx, fy, sw, rowH);
+    // --- Freeze buffer waveform display ---
+    // Occupies the remaining space in the right column below the loop sliders.
+    int displayH = (titleH + mainH) - fy - pad;
+    if (displayH > 0)
+        freezeBufferDisplay_.setBounds(fx, fy, fw, displayH);
 
     // --- Mixer strip (bottom) ---
     // The mixer is positioned below the main section.
@@ -201,4 +235,17 @@ void PluginEditor::resized()
     inputLevelSlider_.setBounds(pad + 80, my, halfW - 80, rowH);
     samplerLevelLabel_.setBounds(pad * 2 + halfW, my, 95, rowH);
     samplerLevelSlider_.setBounds(pad * 2 + halfW + 95, my, halfW - 95, rowH);
+
+    // --- Pad buttons (bottom row) ---
+    int padY    = titleH + mainH + mixerH + 18;  // Below the "PADS" header text.
+    int padBtnH = padsH - 24;                     // Button height (leave room for header).
+    int totalPadW = getWidth() - pad * 2;         // Available width for all 4 pads.
+    int padGap  = 8;                               // Gap between buttons.
+    int padBtnW = (totalPadW - padGap * 3) / 4;   // Equal width per button.
+
+    for (int i = 0; i < 4; ++i)
+    {
+        int px = pad + i * (padBtnW + padGap);
+        padButtons_[i].setBounds(px, padY, padBtnW, padBtnH);
+    }
 }

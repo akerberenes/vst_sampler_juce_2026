@@ -44,8 +44,6 @@ void FreezeEffect::processBlock(const float* inputAudio, float* outputAudio, int
     if (!outputAudio || numSamples <= 0 || numSamples > 4096)
         return;
 
-    float wetMix = dryWetMix_.load();
-
     if (!isFrozen())
     {
         // --- Recording state ---
@@ -65,27 +63,38 @@ void FreezeEffect::processBlock(const float* inputAudio, float* outputAudio, int
         updateStutterPlayback(tempoInBPM, numSamples);
 
         // Pull the looping frozen audio from the ring buffer.
-        float frozenAudio[4096];
-        freezeBuffer_.pullBlock(frozenAudio, numSamples);
-
-        // Crossfade between the original (dry) input and the frozen (wet) audio.
-        // wetMix=0.0 → only dry;  wetMix=1.0 → only frozen.
-        if (inputAudio)
-        {
-            for (int i = 0; i < numSamples; ++i)
-                outputAudio[i] = inputAudio[i] * (1.0f - wetMix) + frozenAudio[i] * wetMix;
-        }
-        else
-        {
-            // No dry signal: output is entirely the frozen audio.
-            std::memcpy(outputAudio, frozenAudio, numSamples * sizeof(float));
-        }
+        // Output is always 100% wet — the frozen loop only, no dry signal blended in.
+        freezeBuffer_.pullBlock(outputAudio, numSamples);
     }
 }
 
-void FreezeEffect::setDryWetMix(float wet)
+void FreezeEffect::setLoopLength(float length)
 {
-    dryWetMix_.store(std::clamp(wet, 0.0f, 1.0f));
+    loopLength_ = std::clamp(length, 0.0f, 1.0f);
+    applyLoopBounds();
+}
+
+void FreezeEffect::setLoopPosition(float position)
+{
+    loopPosition_ = std::clamp(position, 0.0f, 1.0f);
+    applyLoopBounds();
+}
+
+void FreezeEffect::applyLoopBounds()
+{
+    // Clamp start so the window never exceeds the buffer end.
+    float start = std::clamp(loopPosition_, 0.0f, 1.0f - loopLength_);
+    float end   = start + loopLength_;
+    freezeBuffer_.setLoopStart(start);
+    freezeBuffer_.setLoopEnd(end);
+}
+
+void FreezeEffect::copyBufferSnapshot(std::vector<float>& out) const
+{
+    int size = freezeBuffer_.getSize();
+    out.resize(size);
+    if (size > 0)
+        std::memcpy(out.data(), freezeBuffer_.getBuffer(), size * sizeof(float));
 }
 
 float FreezeEffect::getBufferFillPercentage() const
@@ -100,21 +109,27 @@ void FreezeEffect::updateStutterPlayback(double tempoInBPM, int blockSize)
 {
     // Calculate how many samples correspond to one stutter interval.
     // stutterFraction is a fraction of one beat; samplesPerBeat = 60/BPM * sampleRate.
-    // Example at 120 BPM, stutterFraction=0.125 (1/8 beat):
+    // Example at 120 BPM, stutterFraction=0.015625 (1/64 beat):
     //   samplesPerBeat  = (60 / 120) * 48000 = 24000 samples
-    //   stutterSamples  = 24000 * 0.125      = 3000 samples  (~62.5 ms)
+    //   stutterSamples  = 24000 * 0.015625   = 375 samples  (~7.8 ms)
+    //   → read pointer resets 64 times per beat = very fast choppy retrigger.
     double samplesPerBeat = (60.0 / tempoInBPM) * sampleRate_;
     double stutterSamples = samplesPerBeat * stutterFraction_;
 
     // Accumulate the block size. When enough samples have passed to complete
-    // one stutter interval, jump the read pointer and reset the accumulator.
+    // one stutter interval, reset the read pointer to the loop start.
     stutterAccumulator_ += blockSize;
     if (stutterAccumulator_ >= stutterSamples)
     {
-        // Jump the read pointer forward by stutterFraction of the loop region.
-        // This restarts the loop pattern at the current position + a small offset,
-        // creating the characteristic rhythmic repeat sound.
-        freezeBuffer_.jumpReadPointerByFraction(stutterFraction_);
+        // Reset read pointer to the beginning of the loop window.
+        // This is the "retrigger" — the frozen audio restarts from the loop
+        // start position every stutterFraction of a beat.
+        // With speed > 1.0 the audio plays faster within each grain, so the
+        // tail of each stutter interval may run out of content earlier,
+        // producing a shorter, higher-pitched "click" that still retriggers
+        // at the rhythmic stutter rate.
+        float start = std::clamp(loopPosition_, 0.0f, 1.0f - loopLength_);
+        freezeBuffer_.setReadPosition(start);
         stutterAccumulator_ -= stutterSamples;  // Carry over remainder (stays in sync).
     }
 }
